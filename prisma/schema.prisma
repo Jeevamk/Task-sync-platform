@@ -1,0 +1,289 @@
+// Task Sync Automation - database schema
+// Matches "Database design" in the Technical Documentation.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  /// Pooled connection used by the app (on Neon: the "-pooler" address)
+  url       = env("DATABASE_URL")
+  /// Direct connection used only by migrations (locally: same as DATABASE_URL)
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  DEV
+  QA
+  COORDINATOR
+}
+
+/// Role of a logged-in user inside an organization (who may manage it)
+enum OrgRole {
+  OWNER
+  COORDINATOR
+}
+
+/// Tools an organization connects with its own account
+enum Provider {
+  TRELLO
+  SLACK
+}
+
+enum TaskStatus {
+  TODO
+  ASSIGNED
+  IN_PROGRESS
+  READY_FOR_TESTING
+  COMPLETED
+  ARCHIVED
+}
+
+enum TaskEventType {
+  CREATED
+  ASSIGNED
+  UNASSIGNED
+  STATUS_CHANGED
+  NOTE_ADDED
+  BLOCKED
+  UNBLOCKED
+  QA_PASSED
+  QA_FAILED
+  DUE_CHANGED
+  TITLE_CHANGED
+  DESCRIPTION_CHANGED
+  ARCHIVED
+}
+
+enum EventSource {
+  TRELLO
+  SHEET
+  SLACK
+  SYSTEM
+}
+
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+/// A customer (team or company). Everything below belongs to one organization.
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  memberships Membership[]
+  connections Connection[]
+  projects    Project[]
+  teamMembers TeamMember[]
+
+  @@map("organizations")
+}
+
+/// A person who logs in to Task Sync (Google sign-in)
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String
+  googleSub String?  @unique @map("google_sub")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  memberships Membership[]
+
+  @@map("users")
+}
+
+model Membership {
+  userId         String   @map("user_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  role           OrgRole  @default(COORDINATOR)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, organizationId])
+  @@map("memberships")
+}
+
+/// An organization's own Trello or Slack account. The token is stored ENCRYPTED.
+model Connection {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  provider       Provider
+  /// Trello: member ID of the person who connected. Slack: workspace (team) ID.
+  externalId     String   @map("external_id")
+  externalName   String   @map("external_name")
+  /// Slack only: the bot's user ID in that workspace
+  botUserId      String?  @map("bot_user_id")
+  encryptedToken String   @map("encrypted_token")
+  scopes         String?
+  connectedBy    String?  @map("connected_by")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider])
+  @@index([provider, externalId])
+  @@map("connections")
+}
+
+/// Short-lived value that ties an OAuth "Connect" redirect back to the organization that started it
+model OAuthState {
+  state          String   @id
+  organizationId String   @map("organization_id") @db.Uuid
+  provider       Provider
+  userEmail      String   @map("user_email")
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz
+
+  @@map("oauth_states")
+}
+
+model Project {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  name            String
+  trelloBoardId   String   @unique @map("trello_board_id")
+  trelloWebhookId String?  @map("trello_webhook_id")
+  /// Trello list ID -> TaskStatus, e.g. { "64a1...": "IN_PROGRESS" }
+  listMap         Json     @default("{}") @map("list_map")
+  sheetId         String   @unique @map("sheet_id")
+  slackChannelId  String   @map("slack_channel_id")
+  coordinatorId   String?  @map("coordinator_id") @db.Uuid
+  /// Stuck limits, summary time, time zone, AI summary on/off
+  settings        Json     @default("{}")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  coordinator  TeamMember?  @relation("ProjectCoordinator", fields: [coordinatorId], references: [id])
+  tasks        Task[]
+  syncErrors  SyncError[]
+
+  @@map("projects")
+}
+
+model TeamMember {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  name           String
+  email          String
+  trelloMemberId String? @map("trello_member_id")
+  slackUserId    String? @map("slack_user_id")
+  role           Role    @default(DEV)
+  active         Boolean @default(true)
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  coordinatedProjects Project[]    @relation("ProjectCoordinator")
+  assignedTasks       Task[]       @relation("TaskAssignee")
+  events              TaskEvent[]  @relation("EventActor")
+
+  @@unique([organizationId, email])
+  @@unique([organizationId, trelloMemberId])
+  @@unique([organizationId, slackUserId])
+  @@map("team_members")
+}
+
+model Task {
+  id                 String     @id @default(uuid()) @db.Uuid
+  projectId          String     @map("project_id") @db.Uuid
+  taskKey            String     @map("task_key")
+  trelloCardId       String     @unique @map("trello_card_id")
+  title              String
+  description        String?
+  status             TaskStatus @default(TODO)
+  assigneeId         String?    @map("assignee_id") @db.Uuid
+  progressNotes      String?    @map("progress_notes")
+  blocker            String?
+  dueDate            DateTime?  @map("due_date") @db.Date
+  priority           String?
+  labels             String[]   @default([])
+  pickedUpAt         DateTime?  @map("picked_up_at") @db.Timestamptz
+  startedAt          DateTime?  @map("started_at") @db.Timestamptz
+  readyForTestingAt  DateTime?  @map("ready_for_testing_at") @db.Timestamptz
+  completedAt        DateTime?  @map("completed_at") @db.Timestamptz
+  reopenCount        Int        @default(0) @map("reopen_count")
+  sheetRow           Int?       @map("sheet_row")
+  slackThreadTs      String?    @map("slack_thread_ts")
+  /// Increases on every change; used for optimistic locking
+  version            Int        @default(1)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  project  Project     @relation(fields: [projectId], references: [id])
+  assignee TeamMember? @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  events   TaskEvent[]
+
+  @@unique([projectId, taskKey])
+  @@index([projectId, status])
+  @@map("tasks")
+}
+
+model TaskEvent {
+  id        String        @id @default(uuid()) @db.Uuid
+  taskId    String        @map("task_id") @db.Uuid
+  type      TaskEventType
+  field     String?
+  oldValue  String?       @map("old_value")
+  newValue  String?       @map("new_value")
+  actorId   String?       @map("actor_id") @db.Uuid
+  source    EventSource
+  reason    String?
+  /// True when a change made directly in Trello broke a rule
+  violation Boolean       @default(false)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  task  Task        @relation(fields: [taskId], references: [id])
+  actor TeamMember? @relation("EventActor", fields: [actorId], references: [id])
+
+  @@index([taskId, createdAt])
+  @@map("task_events")
+}
+
+/// Duplicate check: one row per incoming event already handled
+model ProcessedEvent {
+  source      EventSource
+  externalId  String      @map("external_id")
+  processedAt DateTime    @default(now()) @map("processed_at") @db.Timestamptz
+
+  @@id([source, externalId])
+  @@map("processed_events")
+}
+
+/// Events waiting to be sent to n8n (outbox pattern)
+model OutboxEvent {
+  id            String       @id @default(uuid()) @db.Uuid
+  type          String
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now()) @map("next_attempt_at") @db.Timestamptz
+  sentAt        DateTime?    @map("sent_at") @db.Timestamptz
+  lastError     String?      @map("last_error")
+  /// Which delivery steps already succeeded, e.g. { "sheet": true, "history": true }, so a retry never repeats them
+  progress      Json         @default("{}")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([status, nextAttemptAt])
+  @@map("outbox_events")
+}
+
+model SyncError {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String?  @map("project_id") @db.Uuid
+  taskId    String?  @map("task_id") @db.Uuid
+  step      String
+  error     String
+  payload   Json?
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  project Project? @relation(fields: [projectId], references: [id])
+
+  @@index([resolved, createdAt])
+  @@map("sync_errors")
+}
