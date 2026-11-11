@@ -44,10 +44,12 @@ export class TeamController {
 
     const notes: string[] = [];
     let trelloMemberId: string | null = null;
-    if (body.trello?.trim()) {
+    // Accept "@username" as copied from Trello's profile menu.
+    const trelloUsername = body.trello?.trim().replace(/^@+/, '') ?? '';
+    if (trelloUsername) {
       const api = await this.trello.forOrg(orgId);
-      const m = await api.getMember(body.trello.trim()).catch(() => null);
-      if (!m) throw new BadRequestException(`Trello user "${body.trello}" not found`);
+      const m = await api.getMember(trelloUsername).catch(() => null);
+      if (!m) throw new BadRequestException(`Trello user "${trelloUsername}" not found (use the username from trello.com/u/<username>)`);
       trelloMemberId = m.id;
       notes.push(`Trello: ${m.fullName} (@${m.username})`);
     }
