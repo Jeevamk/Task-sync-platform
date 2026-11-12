@@ -6,16 +6,32 @@ import { ProjectsService } from './projects.service';
 
 class CreateProjectDto {
   @ApiProperty({ example: 'Website Revamp' }) name!: string;
-  @ApiProperty({ example: 'https://trello.com/b/AbC12xYz/website-revamp', description: 'Board link, short code or ID' })
+  @ApiProperty({
+    example: 'new',
+    description: 'Board link, short code or ID, or "new" to create a fresh board with all the lists',
+  })
   trelloBoard!: string;
+  @ApiPropertyOptional({ example: 'Website Revamp', description: 'Only with trelloBoard "new": the board name (default: the project name)' })
+  newBoardName?: string;
+  @ApiPropertyOptional({ description: 'Only with trelloBoard "new": Trello workspace ID to create the board in (default: your default workspace)' })
+  trelloWorkspaceId?: string;
   @ApiProperty({ example: 'https://docs.google.com/spreadsheets/d/1Qqwr…/edit', description: 'Sheet link or ID' })
   sheet!: string;
   @ApiProperty({ example: 'C0123456789', description: 'From GET …/slack/channels' }) slackChannelId!: string;
   @ApiPropertyOptional({
-    example: { IN_PROGRESS: 'Doing' },
-    description: 'Only if your list names differ from: To Do, Assigned, In Progress, Ready for Testing, Completed',
+    example: ['Backlog'],
+    description: 'Extra lists created if missing, placed before "To Do". Not linked to a status: cards there are not tracked',
+  })
+  extraLists?: string[];
+  @ApiPropertyOptional({
+    description: 'Only if your list names differ from: To Do, Assigned, In Progress, Ready for Testing, Completed. Example: { "IN_PROGRESS": "Doing" }',
   })
   lists?: Record<string, string>;
+  @ApiPropertyOptional({
+    example: false,
+    description: 'true = create any missing lists on the board (in workflow order) instead of failing. Always on for trelloBoard "new"',
+  })
+  createMissingLists?: boolean;
 }
 
 @ApiTags('Projects')

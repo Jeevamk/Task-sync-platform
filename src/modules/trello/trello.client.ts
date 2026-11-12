@@ -57,6 +57,23 @@ export class TrelloApi {
     return this.request('GET', `/boards/${boardId}/lists`, { fields: 'id,name,closed', filter: 'all' });
   }
 
+  /** Adds a list to the board: at the right end ('bottom') or the left end ('top'). */
+  createList(boardId: string, name: string, pos: 'top' | 'bottom' = 'bottom'): Promise<{ id: string; name: string; closed: boolean }> {
+    return this.request('POST', '/lists', { idBoard: boardId, name, pos });
+  }
+
+  /** Creates an empty board (without Trello's default lists) owned by the connected account. */
+  createBoard(name: string, workspaceId?: string): Promise<{ id: string; name: string; url: string }> {
+    const params: Record<string, string> = { name, defaultLists: 'false', defaultLabels: 'true' };
+    if (workspaceId) params.idOrganization = workspaceId;
+    return this.request('POST', '/boards', params);
+  }
+
+  /** Adds an existing Trello member to a board as a normal member. */
+  addBoardMember(boardId: string, memberId: string): Promise<unknown> {
+    return this.request('PUT', `/boards/${boardId}/members/${memberId}`, { type: 'normal' });
+  }
+
   getBoardLabels(boardId: string): Promise<{ id: string; name: string; color: string | null }[]> {
     return this.request('GET', `/boards/${boardId}/labels`, { fields: 'id,name,color', limit: '1000' });
   }
