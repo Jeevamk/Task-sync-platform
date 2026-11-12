@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_PIPE } from '@nestjs/core';
+import { ErrorReasonFilter } from './common/logging/error-reason.filter';
 import { createValidationPipe } from './common/validation/validation.pipe';
 import { envValidationSchema } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
@@ -53,6 +54,8 @@ import { SheetsModule } from './modules/sheets/sheets.module';
   providers: [
     // Checks every request body against its DTO (registered here so it also applies in tests and on Vercel).
     { provide: APP_PIPE, useFactory: createValidationPipe },
+    // Records why a request failed, so the request log line shows the reason, not just "400".
+    { provide: APP_FILTER, useClass: ErrorReasonFilter },
   ],
 })
 export class AppModule {}

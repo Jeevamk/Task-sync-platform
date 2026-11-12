@@ -35,6 +35,7 @@ async function bootstrap(): Promise<void> {
     .setDescription('Each organization connects its own Trello, Slack and Google Sheet. Log in, create an organization, connect, then add a project.')
     .setVersion('0.3.0')
     .addBearerAuth()
+    .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Sync-Secret', description: 'SHEET_SYNC_SECRET (sheet import only)' }, 'sync-secret')
     .build();
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, doc));
 

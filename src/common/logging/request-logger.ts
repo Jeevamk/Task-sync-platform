@@ -8,7 +8,8 @@ const logger = new Logger('HTTP');
 const QUIET = [/^\/health/, /^\/docs/, /^\/favicon/];
 
 /**
- * One line per request: method, path, status, time taken, request ID.
+ * One line per request: method, path, status, time taken, request ID, and for errors the reason
+ * (set by ErrorReasonFilter, e.g. "400 … - trelloBoard is required").
  * - The query string is left out: OAuth callbacks carry codes and state values in it.
  * - Request bodies and headers are never logged (they can hold tokens).
  * - The request ID is taken from X-Request-Id (or Vercel's X-Vercel-Id) or generated, and sent back
@@ -23,7 +24,8 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
   res.on('finish', () => {
     const ms = Number(process.hrtime.bigint() - started) / 1e6;
     const path = (req.originalUrl || req.url).split('?')[0];
-    const line = `${req.method} ${path} ${res.statusCode} ${ms.toFixed(0)}ms [${requestId}]`;
+    const reason = res.statusCode >= 400 ? res.locals.errorReason : undefined;
+    const line = `${req.method} ${path} ${res.statusCode} ${ms.toFixed(0)}ms [${requestId}]${reason ? ` - ${reason}` : ''}`;
     if (res.statusCode >= 500) logger.error(line);
     else if (res.statusCode >= 400) logger.warn(line);
     else if (QUIET.some((r) => r.test(path))) logger.debug(line);
