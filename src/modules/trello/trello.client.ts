@@ -78,12 +78,20 @@ export class TrelloApi {
     return this.request('GET', `/boards/${boardId}/labels`, { fields: 'id,name,color', limit: '1000' });
   }
 
-  createCard(input: { idList: string; name: string; desc?: string; due?: string; idMembers?: string[]; idLabels?: string[] }): Promise<{
+  createCard(input: {
+    idList: string;
+    name: string;
+    desc?: string;
+    due?: string;
+    idMembers?: string[];
+    idLabels?: string[];
+    pos?: 'top' | 'bottom';
+  }): Promise<{
     id: string;
     shortUrl: string;
     idShort: number;
   }> {
-    const params: Record<string, string> = { idList: input.idList, name: input.name, pos: 'bottom' };
+    const params: Record<string, string> = { idList: input.idList, name: input.name, pos: input.pos ?? 'bottom' };
     if (input.desc) params.desc = input.desc;
     if (input.due) params.due = input.due;
     if (input.idMembers?.length) params.idMembers = input.idMembers.join(',');

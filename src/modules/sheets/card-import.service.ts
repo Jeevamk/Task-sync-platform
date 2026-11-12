@@ -2,8 +2,9 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { Prisma, TaskStatus } from '@prisma/client';
 import { maskEmail } from '../../common/logging/redact';
 import { PrismaService } from '../../prisma/prisma.service';
+import { norm, toTrelloDue } from '../trello/card-fields';
 import { TrelloApi, TrelloClient } from '../trello/trello.client';
-import { ImportRequestDto, ImportRowDto, ImportRowResult, MAX_IMPORT_ROWS } from './dto/import-request.dto';
+import { ImportRequestDto, ImportResponseDto, ImportRowDto, ImportRowResult, MAX_IMPORT_ROWS } from './dto/import-request.dto';
 
 
 @Injectable()
@@ -15,7 +16,7 @@ export class CardImportService {
     private readonly trello: TrelloClient,
   ) {}
 
-  async importRows(req: ImportRequestDto): Promise<{ created: number; failed: number; results: ImportRowResult[] }> {
+  async importRows(req: ImportRequestDto): Promise<ImportResponseDto> {
     if (!req?.sheetId || !Array.isArray(req.rows)) throw new BadRequestException('sheetId and rows are required');
     // Safety net: the DTO already checks this for HTTP requests.
     if (req.rows.length > MAX_IMPORT_ROWS) throw new BadRequestException(`At most ${MAX_IMPORT_ROWS} rows per import`);
@@ -91,7 +92,6 @@ export class CardImportService {
     if (done) return { ...base, ok: true, status: 'already-created' };
 
     const warnings: string[] = [];
-    const norm = (v: string) => v.trim().toLowerCase();
 
     // Assignee: by name or email from the team list.
     let memberId: string | undefined;
@@ -115,12 +115,11 @@ export class CardImportService {
     }
     if (!listId) return { ...base, ok: false, status: 'error', error: 'The board has no lists' };
 
-    // Due date: YYYY-MM-DD, due at 18:00 India time.
+    // Due date: YYYY-MM-DD = due at 18:00 India time.
     let due: string | undefined;
     if (row.dueDate?.trim()) {
-      const d = row.dueDate.trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return { ...base, ok: false, status: 'error', error: `Due Date "${d}" must look like 2026-11-20` };
-      due = new Date(`${d}T18:00:00+05:30`).toISOString();
+      due = toTrelloDue(row.dueDate) ?? undefined;
+      if (!due) return { ...base, ok: false, status: 'error', error: `Due Date "${row.dueDate.trim()}" must look like 2026-11-20` };
     }
 
     // Labels: comma-separated names; unknown ones are skipped with a warning.

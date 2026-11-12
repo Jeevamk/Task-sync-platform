@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiCreatedResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { OrgAccessGuard } from '../../common/auth/org-access.guard';
+import { CreateCardDto, CreatedCardDto } from './dto/create-card.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { ProjectCardsService } from './project-cards.service';
 import { ProjectsService } from './projects.service';
 
 const ProjectId = () => Param('projectId', new ParseUUIDPipe());
@@ -12,7 +14,10 @@ const ProjectId = () => Param('projectId', new ParseUUIDPipe());
 @UseGuards(JwtAuthGuard, OrgAccessGuard)
 @Controller('orgs/:orgId')
 export class ProjectsController {
-  constructor(private readonly projects: ProjectsService) {}
+  constructor(
+    private readonly projects: ProjectsService,
+    private readonly cards: ProjectCardsService,
+  ) {}
 
   /** Boards the connected Trello account can see (for the "Add project" form). */
   @Get('trello/boards')
@@ -44,6 +49,16 @@ export class ProjectsController {
   @Get('projects/:projectId/board-members')
   boardMembers(@Param('orgId') orgId: string, @ProjectId() projectId: string) {
     return this.projects.boardMembers(orgId, projectId);
+  }
+
+  @Post('projects/:projectId/cards')
+  @ApiOperation({
+    summary: 'Create a Trello card on the project board',
+    description: 'The card then syncs like any card made in Trello (task, sheet row, Slack thread). Member IDs come from …/board-members.',
+  })
+  @ApiCreatedResponse({ type: CreatedCardDto })
+  createCard(@Param('orgId') orgId: string, @ProjectId() projectId: string, @Body() body: CreateCardDto): Promise<CreatedCardDto> {
+    return this.cards.create(orgId, projectId, body);
   }
 
   /** Re-register the Trello webhook, e.g. after the server address changed. */
