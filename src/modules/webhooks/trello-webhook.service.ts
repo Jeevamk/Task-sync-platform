@@ -7,28 +7,9 @@ import { OutboxService } from '../outbox/outbox.service';
 import { CardSnapshot, ChangeResult, TaskChange, TasksService } from '../tasks/tasks.service';
 import { TrelloClient } from '../trello/trello.client';
 import { runInBackground } from '../../common/background';
+import { TrelloWebhookBody } from './dto/trello-webhook-body';
 
-/** The parts of a Trello webhook payload we read. */
-export interface TrelloWebhookBody {
-  action?: {
-    id: string;
-    type: string;
-    date: string;
-    idMemberCreator?: string;
-    memberCreator?: { fullName?: string };
-    member?: { id?: string; fullName?: string };
-    data?: {
-      board?: { id: string };
-      card?: { id: string; name?: string; desc?: string; idShort?: number; shortLink?: string; idList?: string; due?: string | null; closed?: boolean };
-      list?: { id: string };
-      listAfter?: { id: string };
-      listBefore?: { id: string };
-      old?: Record<string, unknown>;
-      idMember?: string;
-      text?: string;
-    };
-  };
-}
+export type { TrelloWebhookBody } from './dto/trello-webhook-body';
 
 /**
  * Every customer's board sends changes here. The board ID tells us which project
@@ -68,18 +49,30 @@ export class TrelloWebhookService {
     const action = body.action;
     const cardId = action?.data?.card?.id;
     const boardId = action?.data?.board?.id;
-    if (!action || !cardId || !boardId) return { outcome: 'ignored', reason: 'not a card action' };
+    if (!action || !cardId || !boardId) {
+      this.logger.debug(`Ignored Trello ${action?.type ?? 'event'}: not a card action`);
+      return { outcome: 'ignored', reason: 'not a card action' };
+    }
 
     const project = await this.prisma.project.findUnique({ where: { trelloBoardId: boardId } });
-    if (!project || !project.active) return { outcome: 'ignored', reason: `board ${boardId} is not a registered project` };
+    if (!project || !project.active) {
+      // A webhook still exists for a board with no active project (e.g. project deleted): harmless.
+      this.logger.warn(`Ignored Trello ${action.type} on board ${boardId}: no active project for this board`);
+      return { outcome: 'ignored', reason: `board ${boardId} is not a registered project` };
+    }
 
     const change = await this.toChange(action, project.organizationId);
-    if (!change) return { outcome: 'ignored', reason: `action ${action.type} not used` };
+    if (!change) {
+      this.logger.debug(`[${project.name}] Ignored Trello ${action.type} on card ${cardId}: not tracked`);
+      return { outcome: 'ignored', reason: `action ${action.type} not used` };
+    }
+    this.logger.debug(`[${project.name}] Trello ${action.type} on card ${cardId} by ${action.memberCreator?.fullName ?? action.idMemberCreator ?? 'unknown'}: ${change.kind}`);
 
     // New card for us? Fetch its details with the organization's own Trello token.
     let card: CardSnapshot | undefined;
     const known = await this.prisma.task.findUnique({ where: { trelloCardId: cardId }, select: { id: true } });
     if (!known) {
+      this.logger.debug(`[${project.name}] Card ${cardId} is new to us: fetching its details`);
       const api = await this.trello.forOrg(project.organizationId);
       const c = await api.getCard(cardId);
       card = {

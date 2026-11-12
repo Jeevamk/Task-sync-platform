@@ -47,6 +47,7 @@ export class SlackApi {
       cursor = r.response_metadata?.next_cursor ?? '';
       if (!cursor) break;
     }
+    logger.debug(`Listed ${out.length} Slack channels`);
     return out;
   }
 
@@ -69,15 +70,20 @@ export class SlackApi {
     // users.lookupByEmail and conversations.* accept form fields; chat.* accepts JSON. Form works for all of these.
     const form = new URLSearchParams();
     for (const [k, v] of Object.entries(body)) if (v !== undefined && v !== null) form.set(k, String(v));
+    const started = Date.now();
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form,
       signal: AbortSignal.timeout(15_000),
     });
-    const json = (await res.json()) as { ok: boolean; error?: string } & T;
+    const json = (await res.json().catch(() => ({ ok: false, error: `http_${res.status}` }))) as { ok: boolean; error?: string } & T;
+    // Method name and timing only: message text and emails are never logged.
+    logger.verbose(`${method} -> ${json.ok ? 'ok' : json.error} ${Date.now() - started}ms`);
     if (!json.ok) {
-      logger.warn(`Slack ${method} -> ${json.error}`);
+      // users_not_found is a normal answer for lookupByEmail, not a problem.
+      if (json.error === 'users_not_found') logger.debug(`Slack ${method} -> ${json.error}`);
+      else logger.warn(`Slack ${method} -> ${json.error}${slackHint(json.error)}`);
       throw new SlackError(method, json.error ?? `http_${res.status}`);
     }
     return json;
@@ -86,6 +92,8 @@ export class SlackApi {
 
 @Injectable()
 export class SlackClient {
+  private readonly logger = new Logger(SlackClient.name);
+
   constructor(
     private readonly config: ConfigService,
     private readonly connections: ConnectionsService,
@@ -127,8 +135,33 @@ export class SlackClient {
       bot_user_id?: string;
       team?: { id: string; name: string };
     };
-    if (!json.ok || !json.access_token || !json.team) throw new SlackError('oauth.v2.access', json.error ?? 'no_token');
+    if (!json.ok || !json.access_token || !json.team) {
+      this.logger.warn(`Slack install failed at oauth.v2.access: ${json.error ?? 'no_token'}${slackHint(json.error)}`);
+      throw new SlackError('oauth.v2.access', json.error ?? 'no_token');
+    }
+    this.logger.log(`Slack install OK: workspace "${json.team.name}" (${json.team.id}), scopes ${json.scope ?? '-'}`);
     return { token: json.access_token, teamId: json.team.id, teamName: json.team.name, botUserId: json.bot_user_id ?? '', scopes: json.scope ?? '' };
+  }
+}
+
+/** A short fix-it hint for the Slack errors people actually hit, appended to log lines. */
+function slackHint(code: string | undefined): string {
+  switch (code) {
+    case 'not_in_channel':
+    case 'channel_not_found':
+      return ' (invite the bot: /invite @Task Sync)';
+    case 'missing_scope':
+      return ' (add the scope in the Slack app, then reinstall with Add to Slack)';
+    case 'invalid_auth':
+    case 'token_revoked':
+    case 'account_inactive':
+      return ' (the workspace must click Add to Slack again)';
+    case 'bad_redirect_uri':
+      return ' (add PUBLIC_BASE_URL/connect/slack/callback to the Slack app Redirect URLs)';
+    case 'ratelimited':
+      return ' (Slack rate limit: will be retried)';
+    default:
+      return '';
   }
 }
 

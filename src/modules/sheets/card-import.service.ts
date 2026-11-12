@@ -1,37 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, TaskStatus } from '@prisma/client';
+import { maskEmail } from '../../common/logging/redact';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrelloApi, TrelloClient } from '../trello/trello.client';
+import { ImportRequestDto, ImportRowDto, ImportRowResult, MAX_IMPORT_ROWS } from './dto/import-request.dto';
 
-/** One row from the sheet's Import tab. */
-export interface ImportRow {
-  rowNumber: number;
-  /** Stable ID of the row (written by the Apps Script), so a row is never created twice. */
-  key: string;
-  title: string;
-  description?: string;
-  list?: string;
-  assignee?: string;
-  dueDate?: string;
-  labels?: string;
-}
-
-export interface ImportRequest {
-  sheetId: string;
-  editorEmail?: string;
-  rows: ImportRow[];
-}
-
-export interface ImportRowResult {
-  rowNumber: number;
-  ok: boolean;
-  status: 'created' | 'already-created' | 'error';
-  cardUrl?: string;
-  warnings?: string[];
-  error?: string;
-}
-
-const MAX_ROWS = 100;
 
 @Injectable()
 export class CardImportService {
@@ -42,13 +15,17 @@ export class CardImportService {
     private readonly trello: TrelloClient,
   ) {}
 
-  async importRows(req: ImportRequest): Promise<{ created: number; failed: number; results: ImportRowResult[] }> {
+  async importRows(req: ImportRequestDto): Promise<{ created: number; failed: number; results: ImportRowResult[] }> {
     if (!req?.sheetId || !Array.isArray(req.rows)) throw new BadRequestException('sheetId and rows are required');
-    if (req.rows.length > MAX_ROWS) throw new BadRequestException(`At most ${MAX_ROWS} rows per import`);
+    // Safety net: the DTO already checks this for HTTP requests.
+    if (req.rows.length > MAX_IMPORT_ROWS) throw new BadRequestException(`At most ${MAX_IMPORT_ROWS} rows per import`);
 
     // 1. Which project is this sheet for?
     const project = await this.prisma.project.findFirst({ where: { sheetId: req.sheetId, active: true } });
-    if (!project) throw new NotFoundException('This sheet is not linked to an active project (check sheetId in config/project.json)');
+    if (!project) {
+      this.logger.warn(`Sheet import refused: sheet ${req.sheetId} is not linked to an active project`);
+      throw new NotFoundException('This sheet is not linked to an active project (check sheetId in config/project.json)');
+    }
 
     // 2. Only coordinators of THIS organization may create cards.
     const email = (req.editorEmail ?? '').trim().toLowerCase();
@@ -57,7 +34,10 @@ export class CardImportService {
           where: { organizationId: project.organizationId, email: { equals: email, mode: 'insensitive' } },
         })
       : null;
-    if (!editor) throw new ForbiddenException(`${email || 'Your Google account'} is not in the team list`);
+    if (!editor) {
+      this.logger.warn(`[${project.name}] Sheet import refused: ${maskEmail(email) || 'no editor email'} is not in the team list`);
+      throw new ForbiddenException(`${email || 'Your Google account'} is not in the team list`);
+    }
     if (editor.role !== 'COORDINATOR') throw new ForbiddenException('Only a coordinator can create cards from the sheet');
 
     // 3. Load the board's lists, labels and the team once (with the organization's own Trello token).
@@ -75,17 +55,19 @@ export class CardImportService {
 
     const results: ImportRowResult[] = [];
     for (const row of req.rows) {
-      results.push(await this.importOne(row, req.sheetId, trello, { openLists, labels, team, todoListId, assignedListId }));
+      const r = await this.importOne(row, req.sheetId, trello, { openLists, labels, team, todoListId, assignedListId });
+      if (r.status === 'error') this.logger.warn(`[${project.name}] Import row ${row.rowNumber} failed: ${r.error}`);
+      results.push(r);
     }
 
     const created = results.filter((r) => r.status === 'created').length;
     const failed = results.filter((r) => r.status === 'error').length;
-    this.logger.log(`Sheet import by ${editor.name}: ${created} created, ${failed} failed, ${results.length - created - failed} already done`);
+    this.logger.log(`[${project.name}] Sheet import by ${editor.name}: ${created} created, ${failed} failed, ${results.length - created - failed} already done`);
     return { created, failed, results };
   }
 
   private async importOne(
-    row: ImportRow,
+    row: ImportRowDto,
     sheetId: string,
     trello: TrelloApi,
     ctx: {

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_PIPE } from '@nestjs/core';
+import { createValidationPipe } from './common/validation/validation.pipe';
 import { envValidationSchema } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { CryptoModule } from './common/crypto/token-crypto.service';
@@ -47,6 +49,10 @@ import { SheetsModule } from './modules/sheets/sheets.module';
     WebhooksModule,
     SheetsModule,
     InternalModule,
+  ],
+  providers: [
+    // Checks every request body against its DTO (registered here so it also applies in tests and on Vercel).
+    { provide: APP_PIPE, useFactory: createValidationPipe },
   ],
 })
 export class AppModule {}

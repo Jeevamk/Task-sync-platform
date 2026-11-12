@@ -1,7 +1,8 @@
-import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client } from 'google-auth-library';
+import { maskEmail, shortId } from '../../common/logging/redact';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface LoginResult {
@@ -11,6 +12,7 @@ export interface LoginResult {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly google = new OAuth2Client();
 
   constructor(
@@ -22,28 +24,39 @@ export class AuthService {
   /** The web app sends the Google ID token from "Sign in with Google"; we check it with Google. */
   async loginWithGoogle(idToken: string): Promise<LoginResult> {
     const audience = this.config.get<string>('GOOGLE_OAUTH_CLIENT_ID');
-    if (!audience) throw new UnauthorizedException('GOOGLE_OAUTH_CLIENT_ID is not set on the server');
+    if (!audience) {
+      this.logger.error('Google sign-in attempted but GOOGLE_OAUTH_CLIENT_ID is not set');
+      throw new UnauthorizedException('GOOGLE_OAUTH_CLIENT_ID is not set on the server');
+    }
     if (!idToken) throw new UnauthorizedException('idToken is required');
     let payload;
     try {
       payload = (await this.google.verifyIdToken({ idToken, audience })).getPayload();
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Google sign-in rejected: ${err instanceof Error ? err.message : String(err)}`);
       throw new UnauthorizedException('Google sign-in could not be verified');
     }
-    if (!payload?.email || !payload.email_verified) throw new UnauthorizedException('Google account email is not verified');
+    if (!payload?.email || !payload.email_verified) {
+      this.logger.warn(`Google sign-in rejected: email not verified (${maskEmail(payload?.email)})`);
+      throw new UnauthorizedException('Google account email is not verified');
+    }
 
     const user = await this.prisma.user.upsert({
       where: { email: payload.email.toLowerCase() },
       create: { email: payload.email.toLowerCase(), name: payload.name ?? payload.email, googleSub: payload.sub },
       update: { name: payload.name ?? undefined, googleSub: payload.sub },
     });
+    this.logger.log(`Google sign-in: ${maskEmail(user.email)} (user ${shortId(user.id)})`);
     return this.issue(user);
   }
 
   /** Local testing only (ALLOW_DEV_LOGIN=true and not production): log in by email without Google. */
   async devLogin(email: string, name?: string): Promise<LoginResult> {
     const allowed = this.config.get<boolean>('ALLOW_DEV_LOGIN') && this.config.get('NODE_ENV') !== 'production';
-    if (!allowed) throw new ForbiddenException('Dev login is disabled');
+    if (!allowed) {
+      this.logger.warn(`Dev login refused for ${maskEmail(email)}: disabled on this server`);
+      throw new ForbiddenException('Dev login is disabled');
+    }
     const clean = String(email ?? '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+$/.test(clean)) throw new UnauthorizedException('A valid email is required');
     const user = await this.prisma.user.upsert({
@@ -51,6 +64,7 @@ export class AuthService {
       create: { email: clean, name: name?.trim() || clean },
       update: name?.trim() ? { name: name.trim() } : {},
     });
+    this.logger.log(`Dev login: ${maskEmail(user.email)} (user ${shortId(user.id)})`);
     return this.issue(user);
   }
 

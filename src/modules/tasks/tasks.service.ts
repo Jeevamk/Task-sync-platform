@@ -71,15 +71,27 @@ export class TasksService {
 
   /** The single place where a task changes. */
   async applyChange(input: ChangeInput): Promise<ChangeResult> {
+    const started = Date.now();
     try {
-      return await this.prisma.$transaction(async (tx) => this.applyInTx(tx, input), { timeout: 15_000 });
+      const result = await this.prisma.$transaction(async (tx) => this.applyInTx(tx, input), { timeout: 15_000 });
+      this.logger.debug(
+        `${input.source} ${input.change.kind} on card ${input.trelloCardId}: ${result.outcome}` +
+          `${result.eventType ? ` -> ${result.eventType}` : ''}${result.reason ? ` (${result.reason})` : ''} in ${Date.now() - started}ms`,
+      );
+      return result;
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         const target = String((err.meta as { target?: unknown })?.target ?? '');
         if (target.includes('external_id') || target.includes('processed_events') || target.includes('source')) {
+          // Trello retried, or two deliveries raced: already handled once, safe to skip.
+          this.logger.debug(`Duplicate ${input.source} event ${input.externalId} skipped`);
           return { outcome: 'duplicate', reason: `event ${input.externalId} already processed` };
         }
       }
+      this.logger.error(
+        `Could not apply ${input.source} ${input.change.kind} on card ${input.trelloCardId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
       throw err;
     }
   }

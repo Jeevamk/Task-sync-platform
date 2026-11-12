@@ -5,6 +5,10 @@ export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
   PORT: Joi.number().port().default(3000),
 
+  /** Logging: how much (error < warn < log < debug < verbose) and how (pretty for a terminal, json for Vercel). */
+  LOG_LEVEL: Joi.string().valid('error', 'warn', 'log', 'debug', 'verbose').allow('').optional(),
+  LOG_FORMAT: Joi.string().valid('pretty', 'json').allow('').optional(),
+
   /** Public address of this API (ngrok locally, the Vercel URL in production). */
   PUBLIC_BASE_URL: Joi.string().uri().required(),
   /** Where the coordinator web app runs (used after "Connect" redirects). Optional until Step 7. */

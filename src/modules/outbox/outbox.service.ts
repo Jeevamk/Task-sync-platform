@@ -39,14 +39,23 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     const every = this.config.get<number>('OUTBOX_POLL_MS', 0);
     if (every > 0 && !process.env.VERCEL) {
-      this.timer = setInterval(() => void this.flushPending(), every);
+      this.timer = setInterval(
+        () =>
+          void this.flushPending().catch((err: unknown) =>
+            this.logger.error(`Outbox poll failed: ${err instanceof Error ? err.message : String(err)}`),
+          ),
+        every,
+      );
       this.timer.unref();
       this.logger.log(`Local outbox polling every ${every} ms`);
     }
   }
 
   onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.logger.log('Outbox polling stopped');
+    }
   }
 
   /** Save an event inside the caller's transaction. */
@@ -55,6 +64,7 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
     await tx.outboxEvent.create({
       data: { id, type, payload: { eventId: id, type, ...payload } as Prisma.InputJsonValue },
     });
+    this.logger.debug(`Queued ${type} event ${id}`);
     return id;
   }
 
@@ -66,6 +76,7 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
   async flushPending(limit = 25): Promise<FlushResult> {
     const result: FlushResult = { sent: 0, retried: 0, failed: 0 };
     if (this.flushing) {
+      this.logger.verbose('Outbox flush already running: will run again when it finishes');
       this.flushAgain = true;
       return result;
     }
@@ -76,15 +87,20 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
         orderBy: { createdAt: 'asc' },
         take: limit,
       });
+      if (due.length) this.logger.debug(`Outbox: ${due.length} event(s) due`);
 
       for (const event of due) {
         const claimed = await this.prisma.outboxEvent.updateMany({
           where: { id: event.id, status: 'PENDING', attempts: event.attempts },
           data: { attempts: { increment: 1 }, nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS) },
         });
-        if (claimed.count === 0) continue;
+        if (claimed.count === 0) {
+          this.logger.debug(`Event ${event.id} already taken by another worker`);
+          continue;
+        }
 
         const attempt = event.attempts + 1;
+        const started = Date.now();
         try {
           await this.delivery.deliver(
             event.payload as unknown as TaskEventPayload,
@@ -97,6 +113,7 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
             where: { id: event.id },
             data: { status: 'SENT', sentAt: new Date(), lastError: null },
           });
+          this.logger.debug(`Event ${event.id} (${event.type}) delivered on attempt ${attempt} in ${Date.now() - started}ms`);
           result.sent++;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

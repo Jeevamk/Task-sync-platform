@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
@@ -10,6 +10,8 @@ import { timingSafeEqual } from 'crypto';
  */
 @Injectable()
 export class InternalApiKeyGuard implements CanActivate {
+  private readonly logger = new Logger(InternalApiKeyGuard.name);
+
   constructor(private readonly config: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -23,6 +25,8 @@ export class InternalApiKeyGuard implements CanActivate {
     const cronSecret = this.config.get<string>('CRON_SECRET');
     if (cronSecret && auth && safeEqual(auth, `Bearer ${cronSecret}`)) return true;
 
+    // Never log the key itself: only whether one was sent.
+    this.logger.warn(`Rejected ${req.method} ${req.path}: ${apiKey || auth ? 'wrong' : 'no'} API key (from ${req.ip})`);
     throw new UnauthorizedException('Missing or invalid API key');
   }
 }

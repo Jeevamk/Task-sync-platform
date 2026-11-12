@@ -30,11 +30,23 @@ export class DeliveryService {
   async deliver(event: TaskEventPayload, progress: DeliveryProgress, saveProgress: (p: DeliveryProgress) => Promise<void>): Promise<void> {
     const plan = buildDeliveryPlan(event);
     const done = { ...progress };
+    const label = `${event.type} ${event.task?.key ?? ''} (event ${event.eventId})`;
     const step = async (name: keyof DeliveryProgress, work: () => Promise<void>) => {
-      if (done[name]) return;
-      await work();
+      if (done[name]) {
+        this.logger.debug(`${label}: ${name} already done, skipped`);
+        return;
+      }
+      const started = Date.now();
+      try {
+        await work();
+      } catch (err) {
+        // The outbox logs the retry; this line says which step broke.
+        this.logger.warn(`${label}: ${name} step failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
       done[name] = true;
       await saveProgress(done);
+      this.logger.debug(`${label}: ${name} done in ${Date.now() - started}ms`);
     };
 
     await step('sheet', () => this.upsertTaskRow(event.project.sheetId, plan.taskRow));
@@ -43,6 +55,7 @@ export class DeliveryService {
     if (this.config.get<string>('N8N_EVENT_WEBHOOK_URL')) {
       await step('n8n', () => this.forwardToN8n(event));
     }
+    this.logger.log(`Delivered ${label}: ${Object.keys(done).filter((k) => done[k as keyof DeliveryProgress]).join(', ')}`);
   }
 
   private async upsertTaskRow(sheetId: string, row: Record<string, string | number>): Promise<void> {
@@ -51,6 +64,7 @@ export class DeliveryService {
     if (keyCol === -1) throw new Error('The Tasks tab has no "Task ID" header in row 1');
     const found = await this.sheets.findRow(sheetId, 'Tasks', keyCol, String(row['Task ID']));
     const target = found.row ?? found.nextRow;
+    this.logger.debug(`Tasks row for ${row['Task ID']}: ${found.row ? `update row ${found.row}` : `new row ${target}`}`);
     const cells = Object.entries(row)
       .map(([name, value]) => ({ col: headers.indexOf(name), value }))
       .filter((c) => c.col !== -1);
@@ -59,7 +73,10 @@ export class DeliveryService {
 
   private async appendHistory(sheetId: string, row: Record<string, string>): Promise<void> {
     const headers = await this.sheets.getHeaders(sheetId, 'History');
-    if (!headers.length) return; // no History tab headers: skip quietly
+    if (!headers.length) {
+      this.logger.debug('No History tab headers: history row skipped');
+      return;
+    }
     await this.sheets.appendRow(sheetId, 'History', headers.map((h) => row[h] ?? ''));
   }
 
@@ -67,7 +84,10 @@ export class DeliveryService {
     // Read the thread at send time: an earlier event may have just created it.
     const task = await this.prisma.task.findUnique({ where: { id: event.task.id }, select: { slackThreadTs: true } });
     const threadTs = task?.slackThreadTs ?? null;
-    if (threadTs && !text.threadText) return;
+    if (threadTs && !text.threadText) {
+      this.logger.debug(`${event.task.key}: nothing to post in Slack for ${event.type}`);
+      return;
+    }
 
     const api = await this.slack.forOrg(event.project.organizationId);
     if (threadTs) {
@@ -80,6 +100,7 @@ export class DeliveryService {
       return;
     }
     const posted = await api.postMessage({ channel: event.project.slackChannelId, text: text.parentText });
+    this.logger.debug(`${event.task.key}: started a Slack thread in ${event.project.slackChannelId}`);
     await this.prisma.task.updateMany({ where: { id: event.task.id, slackThreadTs: null }, data: { slackThreadTs: posted.ts } });
   }
 

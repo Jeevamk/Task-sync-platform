@@ -112,9 +112,17 @@ export class TrelloApi {
     url.searchParams.set('key', this.key);
     url.searchParams.set('token', this.token);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    const res = await fetch(url, { method, signal: AbortSignal.timeout(15_000) });
+    const started = Date.now();
+    const res = await fetch(url, { method, signal: AbortSignal.timeout(15_000) }).catch((err: Error) => {
+      logger.warn(`Trello ${method} ${path} did not answer: ${err.message}`);
+      throw err;
+    });
     const text = await res.text();
+    // Path only: the full URL carries the API key and token.
+    logger.verbose(`${method} ${path} -> ${res.status} ${Date.now() - started}ms`);
     if (!res.ok) {
+      if (res.status === 401) logger.warn(`Trello rejected the token (401): the organization must connect Trello again`);
+      else if (res.status === 429) logger.warn(`Trello rate limit hit on ${method} ${path}`);
       logger.warn(`Trello ${method} ${path} -> ${res.status} ${text.slice(0, 200)}`);
       throw new Error(`Trello ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
     }

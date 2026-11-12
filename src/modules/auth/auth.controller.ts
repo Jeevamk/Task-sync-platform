@@ -1,26 +1,17 @@
 import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, CurrentUser } from '../../common/auth/auth-user';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { AuthService } from './auth.service';
-
-class GoogleLoginDto {
-  @ApiProperty({ description: 'ID token from Google Sign-In in the web app' })
-  idToken!: string;
-}
-
-class DevLoginDto {
-  @ApiProperty({ example: 'you@example.com' })
-  email!: string;
-  @ApiPropertyOptional({ example: 'Your Name' })
-  name?: string;
-}
+import { DevLoginDto } from './dto/dev-login.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 
 @ApiTags('Login')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  /** Log in with the ID token from "Sign in with Google". */
   @Post('google')
   @HttpCode(200)
   google(@Body() body: GoogleLoginDto) {
@@ -34,6 +25,7 @@ export class AuthController {
     return this.auth.devLogin(body?.email, body?.name);
   }
 
+  /** The logged-in user and their organizations. */
   @Get('me')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)

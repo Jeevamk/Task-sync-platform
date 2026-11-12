@@ -1,33 +1,27 @@
-import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { ApiBearerAuth, ApiExcludeEndpoint, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Logger, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 import { Provider } from '@prisma/client';
 import { AuthUser, CurrentUser } from '../../common/auth/auth-user';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { OrgAccessGuard } from '../../common/auth/org-access.guard';
-import { SlackClient } from '../slack/slack.client';
-import { TrelloClient } from '../trello/trello.client';
+import { errMsg } from '../../common/logging/redact';
+import { ConnectFlowService } from './connect-flow.service';
+import { escapeHtml, resultPage, trelloCallbackPage } from './connect-pages';
 import { ConnectionsService } from './connections.service';
-
-class TrelloCompleteDto {
-  @ApiProperty() state!: string;
-  @ApiProperty() token!: string;
-}
+import { TrelloCompleteDto } from './dto/trello-complete.dto';
 
 /** Connect each organization's OWN Trello and Slack. */
 @ApiTags('Connections')
 @Controller()
 export class ConnectionsController {
+  private readonly logger = new Logger(ConnectionsController.name);
+
   constructor(
     private readonly connections: ConnectionsService,
-    private readonly trello: TrelloClient,
-    private readonly slack: SlackClient,
-    private readonly config: ConfigService,
+    private readonly connectFlow: ConnectFlowService,
   ) {}
 
-  private base(): string {
-    return this.config.getOrThrow<string>('PUBLIC_BASE_URL').replace(/\/$/, '');
-  }
+  // ─────────── Called from Swagger / the web app (login required) ───────────
 
   @Get('orgs/:orgId/connections')
   @ApiBearerAuth()
@@ -40,18 +34,16 @@ export class ConnectionsController {
   @Post('orgs/:orgId/connections/trello/start')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, OrgAccessGuard)
-  async startTrello(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
-    const state = await this.connections.createState(orgId, 'TRELLO', user.email);
-    return { authorizeUrl: this.trello.authorizeUrl(`${this.base()}/connect/trello/callback?state=${state}`) };
+  startTrello(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.connectFlow.startTrello(orgId, user.email);
   }
 
   /** Returns the "Add to Slack" link to open in the browser. */
   @Post('orgs/:orgId/connections/slack/start')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, OrgAccessGuard)
-  async startSlack(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
-    const state = await this.connections.createState(orgId, 'SLACK', user.email);
-    return { authorizeUrl: this.slack.authorizeUrl(state, `${this.base()}/connect/slack/callback`) };
+  startSlack(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.connectFlow.startSlack(orgId, user.email);
   }
 
   @Delete('orgs/:orgId/connections/:provider')
@@ -64,83 +56,41 @@ export class ConnectionsController {
     return { ok: true };
   }
 
-  /**
-   * Trello sends the user back here with the token in the URL fragment (#token=...),
-   * which only the browser can read. This small page reads it and finishes the connection.
-   */
+  // ─────────── Opened by the browser when Trello / Slack send the user back ───────────
+
+  /** Trello's return address: a small page that reads the token from #token=… and finishes the connection. */
   @Get('connect/trello/callback')
   @ApiExcludeEndpoint()
   @Header('Content-Type', 'text/html; charset=utf-8')
-  trelloCallbackPage(@Query('state') state: string): string {
-    const safeState = String(state ?? '').replace(/[^A-Za-z0-9_-]/g, '');
-    return page(
-      'Connecting Trello…',
-      `<p id="msg">Connecting your Trello account…</p>
-<script>
-(async () => {
-  const token = new URLSearchParams(location.hash.slice(1)).get('token');
-  const msg = document.getElementById('msg');
-  if (!token) { msg.textContent = 'Trello did not return a token. Close this tab and try again.'; return; }
-  const res = await fetch('/connect/trello/complete', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ state: '${safeState}', token })
-  });
-  const body = await res.json().catch(() => ({}));
-  msg.textContent = res.ok ? '✅ Trello connected as ' + body.account + '. You can close this tab.' : '❌ ' + (body.message || 'Could not connect Trello');
-  history.replaceState(null, '', location.pathname);
-})();
-</script>`,
-    );
+  trelloCallback(@Query('state') state: string): string {
+    return trelloCallbackPage(state);
   }
 
+  /** Called by the page above. */
   @Post('connect/trello/complete')
   @HttpCode(200)
   @ApiExcludeEndpoint()
-  async trelloComplete(@Body() body: TrelloCompleteDto) {
-    const st = await this.connections.consumeState(body?.state, 'TRELLO');
-    if (!body?.token || !/^[A-Za-z0-9]{32,128}$/.test(body.token)) throw new BadRequestException('Invalid Trello token');
-    const me = await this.trello.withToken(body.token).getMe();
-    await this.connections.save(st.organizationId, 'TRELLO', {
-      externalId: me.id,
-      externalName: `${me.fullName} (@${me.username})`,
-      token: body.token,
-      scopes: 'read,write',
-      connectedBy: st.userEmail,
-    });
-    return { ok: true, account: me.fullName };
+  trelloComplete(@Body() body: TrelloCompleteDto) {
+    return this.connectFlow.finishTrello(body?.state, body?.token);
   }
 
-  /** Slack sends the user back here with ?code=…&state=… after "Add to Slack". */
+  /** Slack's return address, with ?code=…&state=… (or ?error=… if the user cancelled). */
   @Get('connect/slack/callback')
   @ApiExcludeEndpoint()
   @Header('Content-Type', 'text/html; charset=utf-8')
   async slackCallback(@Query('code') code: string, @Query('state') state: string, @Query('error') error?: string): Promise<string> {
-    if (error) return page('Slack', `<p>❌ Slack returned: ${escapeHtml(error)}. Close this tab and try again.</p>`);
+    if (error) {
+      // e.g. access_denied when the user clicked Cancel.
+      this.logger.warn(`Slack connect cancelled or refused by Slack: ${error}`);
+      return resultPage(false, `Slack returned: ${escapeHtml(error)}. Close this tab and try again.`);
+    }
     try {
-      const st = await this.connections.consumeState(state, 'SLACK');
-      const r = await this.slack.exchangeCode(code, `${this.base()}/connect/slack/callback`);
-      await this.connections.save(st.organizationId, 'SLACK', {
-        externalId: r.teamId,
-        externalName: r.teamName,
-        token: r.token,
-        botUserId: r.botUserId,
-        scopes: r.scopes,
-        connectedBy: st.userEmail,
-      });
-      return page('Slack connected', `<p>✅ Task Sync was added to the Slack workspace <b>${escapeHtml(r.teamName)}</b>. You can close this tab.</p>`);
+      const workspace = await this.connectFlow.finishSlack(code, state);
+      return resultPage(true, `Task Sync was added to the Slack workspace <b>${escapeHtml(workspace)}</b>. You can close this tab.`);
     } catch (err) {
-      return page('Slack', `<p>❌ ${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`);
+      // The user only sees this page, so the log is the only place the failure is recorded.
+      this.logger.warn(`Slack connect failed: ${errMsg(err)}`);
+      return resultPage(false, escapeHtml(err instanceof Error ? err.message : String(err)));
     }
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
-
-function page(title: string, body: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
-<style>body{font-family:system-ui,sans-serif;max-width:520px;margin:15vh auto;padding:0 20px;line-height:1.5;color:#1c1c1a}</style>
-</head><body><h1 style="font-size:20px">Task Sync</h1>${body}</body></html>`;
 }

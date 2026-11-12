@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -13,6 +13,8 @@ export interface HealthReport {
 
 @Injectable()
 export class HealthService {
+  private readonly logger = new Logger(HealthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -37,6 +39,9 @@ export class HealthService {
       const groups = await this.prisma.outboxEvent.groupBy({ by: ['status'], _count: { _all: true } });
       outbox = Object.fromEntries(groups.map((g: { status: string; _count: { _all: number } }) => [g.status, g._count._all]));
     }
+
+    if (database.status === 'down') this.logger.error(`Health: database is down: ${database.error}`);
+    if (n8n.status === 'down') this.logger.warn(`Health: n8n is down: ${n8n.error}`);
 
     // n8n is optional now (delivery happens in the backend), so only the database decides "ok".
     return { status: database.status === 'up' ? 'ok' : 'error', checks: { database, n8n }, outbox, time: new Date().toISOString() };

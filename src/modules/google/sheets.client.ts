@@ -1,4 +1,4 @@
-import { Global, Injectable, Module } from '@nestjs/common';
+import { Global, Injectable, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JWT } from 'google-auth-library';
 
@@ -42,6 +42,7 @@ export class SheetsError extends Error {
  */
 @Injectable()
 export class SheetsClient {
+  private readonly logger = new Logger('GoogleSheets');
   private readonly auth: JWT;
   readonly serviceAccountEmail: string;
 
@@ -60,7 +61,9 @@ export class SheetsClient {
       'GET',
       `/${sheetId}?fields=properties.title,sheets.properties.title`,
     );
-    return { title: r.properties.title, tabs: r.sheets.map((s) => s.properties.title) };
+    const tabs = r.sheets.map((s) => s.properties.title);
+    this.logger.debug(`Sheet ${sheetId}: "${r.properties.title}", tabs ${tabs.join(', ')}`);
+    return { title: r.properties.title, tabs };
   }
 
   async getHeaders(sheetId: string, tab: string): Promise<string[]> {
@@ -85,6 +88,7 @@ export class SheetsClient {
   /** Write single cells only, so other columns (formulas, notes typed by people) are never touched. */
   async updateCells(sheetId: string, tab: string, row: number, cells: { col: number; value: string | number }[]): Promise<void> {
     if (!cells.length) return;
+    this.logger.debug(`Sheet ${sheetId}: write ${cells.length} cells in ${tab} row ${row}`);
     await this.request('POST', `/${sheetId}/values:batchUpdate`, {
       valueInputOption: 'USER_ENTERED',
       data: cells.map((c) => ({ range: `${tabRef(tab)}!${columnLetter(c.col)}${row}`, values: [[c.value]] })),
@@ -92,6 +96,7 @@ export class SheetsClient {
   }
 
   async appendRow(sheetId: string, tab: string, values: (string | number)[]): Promise<void> {
+    this.logger.debug(`Sheet ${sheetId}: append a row to ${tab}`);
     await this.request(
       'POST',
       `/${sheetId}/values/${encodeURIComponent(`${tabRef(tab)}!A1`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
@@ -100,7 +105,11 @@ export class SheetsClient {
   }
 
   private async request<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
-    const { token } = await this.auth.getAccessToken();
+    const started = Date.now();
+    const { token } = await this.auth.getAccessToken().catch((err: Error) => {
+      this.logger.error(`Could not get a Google access token for ${this.serviceAccountEmail}: ${err.message}`);
+      throw err;
+    });
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets${path}`, {
       method,
       headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -108,6 +117,8 @@ export class SheetsClient {
       signal: AbortSignal.timeout(20_000),
     });
     const text = await res.text();
+    // Path without the query: sheet ID and range only, never secrets.
+    this.logger.verbose(`${method} ${path.split('?')[0]} -> ${res.status} ${Date.now() - started}ms`);
     if (!res.ok) {
       let msg = text.slice(0, 300);
       try {
@@ -118,6 +129,7 @@ export class SheetsClient {
       if (res.status === 403 || res.status === 404) {
         msg = `${msg} — share the sheet with ${this.serviceAccountEmail} as Editor`;
       }
+      this.logger.warn(`${method} ${path.split('?')[0]} failed: ${res.status} ${msg}`);
       throw new SheetsError(`Google Sheets ${res.status}: ${msg}`, res.status);
     }
     return (text ? JSON.parse(text) : null) as T;

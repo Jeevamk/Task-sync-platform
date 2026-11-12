@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { InternalApiKeyGuard } from '../../common/guards/internal-api-key.guard';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -9,6 +9,8 @@ import { FlushResult, OutboxService } from '../outbox/outbox.service';
 @Controller('internal')
 @UseGuards(InternalApiKeyGuard)
 export class InternalController {
+  private readonly logger = new Logger(InternalController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxService,
@@ -17,11 +19,13 @@ export class InternalController {
   /** Vercel Cron calls GET; you can call POST by hand. */
   @Get('outbox/flush')
   flushByCron(): Promise<FlushResult> {
+    this.logger.log('Outbox flush requested by cron');
     return this.outbox.flushPending();
   }
 
   @Post('outbox/flush')
   flushByHand(): Promise<FlushResult> {
+    this.logger.log('Outbox flush requested by hand');
     return this.outbox.flushPending();
   }
 
