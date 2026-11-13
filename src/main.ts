@@ -31,7 +31,13 @@ async function bootstrap(): Promise<void> {
   app.enableCors({ origin: webApp ? [webApp] : false });
 
   // Interactive API docs at /docs (use "Authorize" with the token from /auth/google or /auth/dev-login)
-  SwaggerModule.setup('docs', app, buildOpenApiDocument(app));
+  // The UI files come from a CDN: Vercel does not bundle node_modules/swagger-ui-dist, so serving them
+  // locally gives a blank page there. Keep the version in step with the installed swagger-ui-dist.
+  const swaggerCdn = 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.1';
+  SwaggerModule.setup('docs', app, buildOpenApiDocument(app), {
+    customCssUrl: `${swaggerCdn}/swagger-ui.css`,
+    customJs: [`${swaggerCdn}/swagger-ui-bundle.js`, `${swaggerCdn}/swagger-ui-standalone-preset.js`],
+  });
 
   // Vercel runs this same bootstrap and sets PORT itself.
   const port = Number(process.env.PORT) || config.get<number>('PORT', 3000);
