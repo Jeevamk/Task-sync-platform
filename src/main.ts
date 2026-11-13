@@ -1,10 +1,11 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { createAppLogger } from './common/logging/logger';
 import { requestLogger } from './common/logging/request-logger';
+import { buildOpenApiDocument } from './openapi';
 
 const processLogger = new Logger('Process');
 
@@ -30,14 +31,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({ origin: webApp ? [webApp] : false });
 
   // Interactive API docs at /docs (use "Authorize" with the token from /auth/google or /auth/dev-login)
-  const doc = new DocumentBuilder()
-    .setTitle('Task Sync API')
-    .setDescription('Each organization connects its own Trello, Slack and Google Sheet. Log in, create an organization, connect, then add a project.')
-    .setVersion('0.3.0')
-    .addBearerAuth()
-    .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Sync-Secret', description: 'SHEET_SYNC_SECRET (sheet import only)' }, 'sync-secret')
-    .build();
-  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, doc));
+  SwaggerModule.setup('docs', app, buildOpenApiDocument(app));
 
   // Vercel runs this same bootstrap and sets PORT itself.
   const port = Number(process.env.PORT) || config.get<number>('PORT', 3000);
