@@ -1,13 +1,13 @@
-# Task Sync
+# Taskvane
 
-Task Sync keeps **Trello**, a **Google Sheet** and **Slack** in step for a team.
+Taskvane keeps **Trello**, a **Google Sheet** and **Slack** in step for a team.
 Work happens in Trello as usual. Every change is recorded and shown automatically:
 
 - the **Google Sheet** gets one row per task (status, assignee, dates, cycle times) and a full change **History**;
 - **Slack** gets one thread per task, with an update for every move, assignment and note;
 - the **team rules** (who may move a card where) are checked, and broken rules are flagged to the coordinator.
 
-> This page is the **user guide**: how to set Task Sync up for your team and use it day to day.
+> This page is the **user guide**: how to set Taskvane up for your team and use it day to day.
 > To install or run the backend itself, see **[README-MULTITENANT.md](README-MULTITENANT.md)** (developer setup, `.env`, deploying).
 
 ---
@@ -20,7 +20,7 @@ Work happens in Trello as usual. Every change is recorded and shown automaticall
    - [Step 1: Log in](#step-1-log-in)
    - [Step 2: Create your organization](#step-2-create-your-organization)
    - [Step 3: Connect Trello](#step-3-connect-trello)
-   - [Step 4: Add Task Sync to Slack](#step-4-add-task-sync-to-slack)
+   - [Step 4: Add Taskvane to Slack](#step-4-add-taskvane-to-slack)
    - [Step 5: Prepare the Google Sheet](#step-5-prepare-the-google-sheet)
    - [Step 6: Pick the Slack channel](#step-6-pick-the-slack-channel)
    - [Step 7: Add your team members](#step-7-add-your-team-members)
@@ -43,7 +43,7 @@ Work happens in Trello as usual. Every change is recorded and shown automaticall
                      │
                      ▼
    ┌──────────┐   webhook   ┌──────────────────┐        ┌──────────────────────┐
-   │  Trello  │ ──────────▶ │  Task Sync API   │ ─────▶ │ Google Sheet         │
+   │  Trello  │ ──────────▶ │  Taskvane API   │ ─────▶ │ Google Sheet         │
    │  board   │             │  • records task  │        │  Tasks + History     │
    └──────────┘ ◀────────── │  • checks rules  │        └──────────────────────┘
         ▲     creates cards │  • keeps history │        ┌──────────────────────┐
@@ -57,10 +57,10 @@ Work happens in Trello as usual. Every change is recorded and shown automaticall
 
 | Word | Meaning |
 | --- | --- |
-| **Organization** | Your team or company in Task Sync. It has its own Trello, Slack, sheet and team list. Organizations never see each other's data. |
+| **Organization** | Your team or company in Taskvane. It has its own Trello, Slack, sheet and team list. Organizations never see each other's data. |
 | **Project** | One Trello board, linked to one Google Sheet and one Slack channel. An organization can have many projects. |
 | **Team member** | A person in your organization's team list, with a role: `COORDINATOR`, `DEV` or `QA`. |
-| **Task** | A Trello card that Task Sync tracks. It gets a key like `TASK-12`. |
+| **Task** | A Trello card that Taskvane tracks. It gets a key like `TASK-12`. |
 | **Status lists** | The 5 Trello lists that mean a status: **To Do → Assigned → In Progress → Ready for Testing → Completed**. |
 
 ---
@@ -71,10 +71,10 @@ You need:
 
 | What | Notes |
 | --- | --- |
-| The Task Sync address | e.g. `https://your-app.vercel.app` (or an ngrok address while testing). Below it is written `<API>`. |
+| The Taskvane address | e.g. `https://your-app.vercel.app` (or an ngrok address while testing). Below it is written `<API>`. |
 | A Trello account | It must be able to see (and change) the board you want to sync. |
 | Slack admin rights, or permission to install apps | Only for Step 4. |
-| A Google account | To own the sheet and share it with Task Sync. |
+| A Google account | To own the sheet and share it with Taskvane. |
 
 There is no web app yet, so all steps below use the **interactive API page** at **`<API>/docs`**:
 
@@ -126,7 +126,7 @@ Copy the **`id`** from the response. This is your **`orgId`**; almost every othe
 
 > ⚠️ **Create the organization once.** The team list, Trello, Slack and projects all belong to one organization.
 > If you create a second organization by accident and add the team to one and the project to the other,
-> Task Sync will not recognise your team on that board (every move is then flagged as "not allowed").
+> Taskvane will not recognise your team on that board (every move is then flagged as "not allowed").
 > `GET /orgs` lists your organizations, so you can check which `orgId` you are using.
 
 ### Step 3: Connect Trello
@@ -136,17 +136,17 @@ Copy the **`id`** from the response. This is your **`orgId`**; almost every othe
 3. Log in to Trello if asked, then click **Allow**.
 4. The page shows **✅ Trello connected**. You can close it.
 
-Task Sync now acts in Trello **as this Trello account**: it reads the boards this account can see, registers the
+Taskvane now acts in Trello **as this Trello account**: it reads the boards this account can see, registers the
 webhook, and creates cards. Use an account that is a member of every board you want to sync.
 
 > The connect link works **once** and only for **10 minutes**. If it expired, start again from step 1.
 
-### Step 4: Add Task Sync to Slack
+### Step 4: Add Taskvane to Slack
 
 1. `POST /orgs/{orgId}/connections/slack/start`
 2. Open the **`authorizeUrl`** in your browser.
 3. Pick your Slack workspace (top right) and click **Allow**.
-4. The page shows **✅ Task Sync was added to the Slack workspace …**
+4. The page shows **✅ Taskvane was added to the Slack workspace …**
 
 Check both connections with `GET /orgs/{orgId}`:
 
@@ -170,7 +170,7 @@ Note the **`googleSheets.shareWith`** email: you need it in the next step.
 
 1. Create a new Google Sheet (one sheet per project), e.g. **Website Revamp – Tracker**.
 2. Add a tab named exactly **`Tasks`**. In **row 1**, put the column headers you want.
-   Only **`Task ID`** is required. Task Sync fills these columns when they exist (any order, extra columns are fine):
+   Only **`Task ID`** is required. Taskvane fills these columns when they exist (any order, extra columns are fine):
 
    `Task ID | Trello Card ID | Title | Description | Status | Assignee | Labels / Priority | Due Date | Created At | Picked Up At | Started At | Ready for Testing At | Completed At | Reopen Count | Progress Notes | Trello URL | Last Updated | Last Updated By`
 
@@ -196,11 +196,11 @@ Note the **`googleSheets.shareWith`** email: you need it in the next step.
 Copy the **`id`** of the channel where updates should go.
 
 - **Public channel**: nothing else to do.
-- **Private channel**: first open it in Slack and type `/invite @Task Sync`, otherwise the project cannot post there.
+- **Private channel**: first open it in Slack and type `/invite @Taskvane`, otherwise the project cannot post there.
 
 ### Step 7: Add your team members
 
-Task Sync needs the team list to know **who** moved a card (for the rules, Slack mentions and the "Assignee" column).
+Taskvane needs the team list to know **who** moved a card (for the rules, Slack mentions and the "Assignee" column).
 Add every person who works on your boards:
 
 `POST /orgs/{orgId}/team`
@@ -245,7 +245,7 @@ The response's **`notes`** say what was matched, e.g. *"Trello: Athira Shivaram 
 
 `GET /orgs/{orgId}/trello/boards` lists the boards the connected Trello account can see, if you need the link.
 
-**Option B: let Task Sync create a new board** with all 5 lists and your team on it:
+**Option B: let Taskvane create a new board** with all 5 lists and your team on it:
 
 ```json
 {
@@ -275,7 +275,7 @@ What happens:
 
 1. **Checks first, nothing is changed yet**: the board is visible and not used by another project, the sheet is shared and has a `Tasks` tab with `Task ID`, the bot can post in the channel.
 2. **Board setup**: the board is created (Option B), the 5 status lists are found (or created), extra lists are added.
-3. **Webhook**: Trello is told to send every change on the board to Task Sync.
+3. **Webhook**: Trello is told to send every change on the board to Taskvane.
 4. **Import**: every open card in the status lists becomes a task: a **Tasks** row and a **Slack** message each.
 
 Response:
@@ -300,7 +300,7 @@ Always read **`warnings`**. If `webhook` is `null`, see [Troubleshooting](#10-tr
 
 Work in Trello as you normally do. Each action below is picked up within a few seconds:
 
-| You do this in Trello | Task Sync does this |
+| You do this in Trello | Taskvane does this |
 | --- | --- |
 | **Create a card** in a status list | New task `TASK-n`; new **Tasks** row; new **Slack** message (the start of that task's thread). |
 | **Add a member** to the card | Assignee is set; Slack: *"👤 @Athira is now working on this"*. If the card was in **To Do**, it is **moved to Assigned** automatically. |
@@ -337,7 +337,7 @@ Good for adding many tasks at once. Only **coordinators** can do this.
    | --- | --- |
    | `API_URL` | `<API>` (no `/` at the end) |
    | `SYNC_SECRET` | The `SHEET_SYNC_SECRET` value (ask whoever runs the backend) |
-4. Reload the sheet. A **Task Sync** menu appears. Click **Task Sync → Set up Import tab** (allow the permissions the first time).
+4. Reload the sheet. A **Taskvane** menu appears. Click **Taskvane → Set up Import tab** (allow the permissions the first time).
 
 **Each time**
 
@@ -351,9 +351,9 @@ Good for adding many tasks at once. Only **coordinators** can do this.
    | `Assignee` | Team member **name or email** (must be in the team list, with a Trello username). |
    | `Due Date` | `2026-11-20` = due at 18:00 India time. |
    | `Labels` | Comma-separated label names that exist on the board, e.g. `High, Frontend`. |
-   | `Status`, `Trello Card`, `Row Key` | **Filled by Task Sync**. Do not edit. |
+   | `Status`, `Trello Card`, `Row Key` | **Filled by Taskvane**. Do not edit. |
 
-2. Click **Task Sync → Create Trello cards**.
+2. Click **Taskvane → Create Trello cards**.
 3. Each row's **Status** shows `created` (with the card link), `already created`, or the error for that row.
    Rows with errors can be fixed and sent again; rows already created are never created twice.
 
@@ -413,7 +413,7 @@ Allowed moves between status lists:
 
 Any other move (for example To Do → Completed), or a move by someone **not in the team list**, breaks the rules.
 
-Trello cannot block a move, so Task Sync **applies it anyway and flags it**: the Slack update ends with
+Trello cannot block a move, so Taskvane **applies it anyway and flags it**: the Slack update ends with
 *"⚠️ This move is not allowed by the team rules — coordinator, please check."* and the History records it.
 
 > If **every** move is flagged, the person moving cards is not recognised. Check that they are in the team list
@@ -491,12 +491,12 @@ People are `@mentioned` when their team email matches their Slack account.
 | --- | --- |
 | `401 Unauthorized` on `/orgs/...` | Not logged in or the token expired. Log in again (Step 1) and click **Authorize**. |
 | `403` on an organization | You are not a member of that organization. Check the `orgId` with `GET /orgs`. |
-| `Connect Trello first` / `Add Task Sync to Slack first` | Do Step 3 / Step 4 for **this** organization. |
+| `Connect Trello first` / `Add Taskvane to Slack first` | Do Step 3 / Step 4 for **this** organization. |
 | `This connect link expired` | Connect links last 10 minutes and work once. Start the step again. |
 | `Google Sheets 403 … share the sheet with …` | Share the sheet with the `shareWith` email as **Editor** (Step 5). |
 | `The sheet needs a "Tasks" tab` / `needs a "Task ID" header` | Fix the tab name and row 1 (Step 5). Names must match exactly. |
 | `This sheet is already used by a project` | Use a separate sheet per project. |
-| `Slack channel not found` / `Invite the bot …` | Private channel: type `/invite @Task Sync` in it, then try again. |
+| `Slack channel not found` / `Invite the bot …` | Private channel: type `/invite @Taskvane` in it, then try again. |
 | `The board is missing these lists` | Rename the lists in Trello, send `"lists": { … }` with your names, or send `"createMissingLists": true`. |
 | Warning: `Trello webhook not registered yet` | Trello could not reach the API address. Make sure it is online, then `POST …/projects/{projectId}/webhook`. |
 | Cards change in Trello but nothing happens | The webhook is missing or points to an old address (ngrok addresses change on restart): `POST …/projects/{projectId}/webhook`. Cards in non-status lists are ignored on purpose. |

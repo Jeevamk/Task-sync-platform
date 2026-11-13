@@ -1,6 +1,6 @@
 /**
- * Task Sync – create Trello cards from the "Import" tab.
- * Menu: Task Sync → Set up Import tab / Create Trello cards
+ * Taskvane – create Trello cards from the "Import" tab.
+ * Menu: Taskvane → Set up Import tab / Create Trello cards
  * Script properties needed: API_URL, SYNC_SECRET
  */
 const IMPORT_TAB = 'Import';
@@ -8,7 +8,7 @@ const IMPORT_HEADERS = ['Title', 'Description', 'List', 'Assignee', 'Due Date', 
 
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('Task Sync')
+    .createMenu('Taskvane')
     .addItem('Create Trello cards', 'createTrelloCards')
     .addSeparator()
     .addItem('Set up Import tab', 'setupImportTab')
@@ -22,9 +22,9 @@ function setupImportTab() {
   sheet.getRange(1, 1, 1, IMPORT_HEADERS.length).setValues([IMPORT_HEADERS]).setFontWeight('bold');
   sheet.setFrozenRows(1);
   sheet.getRange('E2:E').setNumberFormat('yyyy-mm-dd');
-  sheet.getRange(1, 7).setNote('Filled by Task Sync. Clear it to create the row again.');
-  sheet.getRange(1, 9).setNote('Filled by Task Sync. Do not edit.');
-  ss.toast('Import tab is ready. Fill Title (required) and the other columns, then Task Sync → Create Trello cards.', 'Task Sync', 8);
+  sheet.getRange(1, 7).setNote('Filled by Taskvane. Clear it to create the row again.');
+  sheet.getRange(1, 9).setNote('Filled by Taskvane. Do not edit.');
+  ss.toast('Import tab is ready. Fill Title (required) and the other columns, then Taskvane → Create Trello cards.', 'Taskvane', 8);
 }
 
 /** Sends every row that has a Title and is not created yet to the backend. */
@@ -41,7 +41,7 @@ function createTrelloCards() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(IMPORT_TAB);
   if (!sheet) {
-    ui.alert('No "Import" tab. Use Task Sync → Set up Import tab first.');
+    ui.alert('No "Import" tab. Use Taskvane → Set up Import tab first.');
     return;
   }
 
@@ -50,7 +50,7 @@ function createTrelloCards() {
   const col = (name) => header.indexOf(name);
   for (const name of IMPORT_HEADERS) {
     if (col(name) === -1) {
-      ui.alert(`Column "${name}" is missing in the Import tab. Use Task Sync → Set up Import tab.`);
+      ui.alert(`Column "${name}" is missing in the Import tab. Use Taskvane → Set up Import tab.`);
       return;
     }
   }
@@ -87,7 +87,7 @@ function createTrelloCards() {
     return;
   }
 
-  ss.toast(`Creating ${rows.length} card(s)…`, 'Task Sync', 5);
+  ss.toast(`Creating ${rows.length} card(s)…`, 'Taskvane', 5);
   const res = UrlFetchApp.fetch(apiUrl + '/webhooks/sheets/import', {
     method: 'post',
     contentType: 'application/json',
@@ -121,5 +121,5 @@ function createTrelloCards() {
     sheet.getRange(r.rowNumber, col('Status') + 1).setValue(status);
     if (r.cardUrl) sheet.getRange(r.rowNumber, col('Trello Card') + 1).setValue(r.cardUrl);
   }
-  ss.toast(`${body.created} created, ${body.failed} failed.`, 'Task Sync', 8);
+  ss.toast(`${body.created} created, ${body.failed} failed.`, 'Taskvane', 8);
 }

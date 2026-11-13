@@ -154,11 +154,11 @@ export class TrelloClient {
     return new TrelloApi(this.config.getOrThrow('TRELLO_API_KEY'), token);
   }
 
-  /** Link that asks a customer to allow Task Sync on their Trello account. */
+  /** Link that asks a customer to allow Taskvane on their Trello account. */
   authorizeUrl(returnUrl: string): string {
     const u = new URL('https://trello.com/1/authorize');
     u.searchParams.set('expiration', 'never');
-    u.searchParams.set('name', 'Task Sync');
+    u.searchParams.set('name', 'Taskvane');
     u.searchParams.set('scope', 'read,write');
     u.searchParams.set('response_type', 'token');
     u.searchParams.set('key', this.config.getOrThrow('TRELLO_API_KEY'));

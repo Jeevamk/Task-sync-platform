@@ -22,7 +22,7 @@ export class ConnectionsService {
     if (!c) {
       this.logger.warn(`Org ${shortId(organizationId)}: ${provider} is not connected`);
       throw new BadRequestException(
-        provider === 'TRELLO' ? 'Connect Trello first (Connections → Connect Trello)' : 'Add Task Sync to Slack first (Connections → Add to Slack)',
+        provider === 'TRELLO' ? 'Connect Trello first (Connections → Connect Trello)' : 'Add Taskvane to Slack first (Connections → Add to Slack)',
       );
     }
     try {

@@ -179,7 +179,7 @@ export class ProjectsService {
     const sheet = await this.sheets.describe(sheetId).catch((err: Error) => {
       throw new BadRequestException(err.message);
     });
-    if (!sheet.tabs.includes('Tasks')) throw new BadRequestException('The sheet needs a "Tasks" tab (copy the Task Sync template)');
+    if (!sheet.tabs.includes('Tasks')) throw new BadRequestException('The sheet needs a "Tasks" tab (copy the Taskvane template)');
 
     const headers = await this.sheets.getHeaders(sheetId, 'Tasks');
     if (!headers.includes('Task ID')) throw new BadRequestException('The Tasks tab needs a "Task ID" header in row 1');
@@ -195,11 +195,11 @@ export class ProjectsService {
     const channel = await slack.channelInfo(String(channelId ?? '').trim()).catch((err: unknown) => {
       const code = err instanceof SlackError ? err.code : String(err);
       throw new BadRequestException(
-        code === 'channel_not_found' ? 'Slack channel not found. For a private channel, first type /invite @Task Sync in it.' : `Slack: ${code}`,
+        code === 'channel_not_found' ? 'Slack channel not found. For a private channel, first type /invite @Taskvane in it.' : `Slack: ${code}`,
       );
     });
     if (channel.is_private && !channel.is_member) {
-      throw new BadRequestException(`Invite the bot to #${channel.name} first: /invite @Task Sync`);
+      throw new BadRequestException(`Invite the bot to #${channel.name} first: /invite @Taskvane`);
     }
     this.logger.debug(`Slack channel OK: #${channel.name} (${channel.id})`);
     return channel;
@@ -225,7 +225,7 @@ export class ProjectsService {
     }
 
     // Trello calls the callback (HEAD) before accepting it: this fails if ngrok / the server is not reachable.
-    const hook = await trello.createWebhook(callback, project.trelloBoardId, `Task Sync – ${project.name}`).catch((err: Error) => {
+    const hook = await trello.createWebhook(callback, project.trelloBoardId, `Taskvane – ${project.name}`).catch((err: Error) => {
       this.logger.warn(`[${project.name}] Trello webhook registration to ${callback} failed: ${err.message}`);
       throw err;
     });

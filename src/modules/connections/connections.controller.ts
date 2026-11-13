@@ -30,7 +30,7 @@ export class ConnectionsController {
     return this.connections.status(orgId);
   }
 
-  /** Returns the link to open in the browser: Trello asks the user to allow Task Sync. */
+  /** Returns the link to open in the browser: Trello asks the user to allow Taskvane. */
   @Post('orgs/:orgId/connections/trello/start')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, OrgAccessGuard)
@@ -86,7 +86,7 @@ export class ConnectionsController {
     }
     try {
       const workspace = await this.connectFlow.finishSlack(code, state);
-      return resultPage(true, `Task Sync was added to the Slack workspace <b>${escapeHtml(workspace)}</b>. You can close this tab.`);
+      return resultPage(true, `Taskvane was added to the Slack workspace <b>${escapeHtml(workspace)}</b>. You can close this tab.`);
     } catch (err) {
       // The user only sees this page, so the log is the only place the failure is recorded.
       this.logger.warn(`Slack connect failed: ${errMsg(err)}`);

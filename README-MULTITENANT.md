@@ -1,4 +1,4 @@
-# Task Sync — Multi-tenant version (0.3.0)
+# Taskvane — Multi-tenant version (0.3.0)
 
 Each **organization** (customer team) now connects **its own** Trello, Slack and Google Sheet.
 Nothing customer-specific lives in code or `.env` any more.
@@ -55,7 +55,7 @@ New tables: `organizations`, `users`, `memberships`, `connections` (encrypted to
    npm test            # signature, unit and app-level self-tests
    npm run start:dev
    ```
-   Open `http://localhost:3000/docs` — you should see the **Task Sync API** page.
+   Open `http://localhost:3000/docs` — you should see the **Taskvane API** page.
 
 ---
 
@@ -67,7 +67,7 @@ Replace `<PUBLIC_BASE_URL>` with your ngrok address now (later your Vercel addre
 - Under **Allowed origins**, add `<PUBLIC_BASE_URL>` (e.g. `https://escapable-smugly-yelp.ngrok-free.dev`).
   Trello only sends the user back to addresses listed here.
 
-**Slack** (api.slack.com/apps → Task Sync)
+**Slack** (api.slack.com/apps → Taskvane)
 1. **OAuth & Permissions → Redirect URLs → Add** `<PUBLIC_BASE_URL>/connect/slack/callback` → **Save URLs**.
 2. **OAuth & Permissions → Bot Token Scopes**: make sure these exist:
    `chat:write, chat:write.public, commands, users:read, users:read.email, im:write, channels:read, groups:read`
@@ -88,11 +88,11 @@ Open `<PUBLIC_BASE_URL>/docs` (or `http://localhost:3000/docs`).
 3. **Connect Trello** — `POST /orgs/{orgId}/connections/trello/start` → open the `authorizeUrl` in the browser → **Allow**
    → the page says *✅ Trello connected*.
 4. **Add to Slack** — `POST /orgs/{orgId}/connections/slack/start` → open `authorizeUrl` → pick the workspace → **Allow**
-   → *✅ Task Sync was added to the Slack workspace …*
+   → *✅ Taskvane was added to the Slack workspace …*
 5. **Check** — `GET /orgs/{orgId}` → both connected, and `googleSheets.shareWith` shows the email to share the sheet with.
 6. **Sheet** — copy the tracker template (tabs `Tasks`, `History`, …), **Share** it with that email as **Editor**.
 7. **Pick a channel** — `GET /orgs/{orgId}/slack/channels` → copy the `id` of your channel.
-   (Private channel? First type `/invite @Task Sync` in it.)
+   (Private channel? First type `/invite @Taskvane` in it.)
 8. **Team** — `POST /orgs/{orgId}/team` for each person, e.g.
    `{ "name": "Jeeva", "email": "you@gmail.com", "role": "COORDINATOR", "trello": "your-trello-username" }`.
    The response's `notes` show what was matched in Trello and Slack.
@@ -133,7 +133,7 @@ Delivery no longer needs n8n. To also send every event to your own n8n workflow,
 | Trello page: *"Invalid return_url"* | Add `<PUBLIC_BASE_URL>` to the Power-Up's **Allowed origins** (Part B) |
 | Slack: *"redirect_uri did not match any configured URIs"* | Add the exact callback URL in Slack → OAuth & Permissions (Part B) |
 | Slack: *"This app is not distributed"* when installing in another workspace | Activate public distribution (Part B) |
-| `Connect Trello first` / `Add Task Sync to Slack first` | Do Part C steps 3–4 for that organization |
+| `Connect Trello first` / `Add Taskvane to Slack first` | Do Part C steps 3–4 for that organization |
 | `Google Sheets 403 … share the sheet with …` | Share the sheet with the service account email as **Editor** |
 | `The board is missing these lists` | Rename the lists in Trello, or send `"lists": { "IN_PROGRESS": "Doing" }` |
 | `Trello webhook not registered yet` (warning) | The API wasn't reachable at `PUBLIC_BASE_URL`. Start ngrok, then `POST /orgs/{orgId}/projects/{id}/webhook` |

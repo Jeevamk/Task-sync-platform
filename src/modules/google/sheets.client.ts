@@ -37,7 +37,7 @@ export class SheetsError extends Error {
 }
 
 /**
- * Google Sheets API as the Task Sync service account.
+ * Google Sheets API as the Taskvane service account.
  * Each customer shares their sheet with GOOGLE_SERVICE_ACCOUNT_EMAIL as Editor; no Google login needed.
  */
 @Injectable()

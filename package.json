@@ -1,8 +1,8 @@
 {
-  "name": "task-sync-backend",
+  "name": "taskvane-backend",
   "version": "0.3.0",
   "private": true,
-  "description": "Task Sync Automation backend (NestJS) - keeps Trello, Google Sheets and Slack in step",
+  "description": "Taskvane Automation backend (NestJS) - keeps Trello, Google Sheets and Slack in step",
   "scripts": {
     "build": "nest build",
     "start": "node dist/main.js",

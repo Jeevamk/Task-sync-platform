@@ -12,12 +12,12 @@ export function page(title: string, bodyHtml: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>body{font-family:system-ui,sans-serif;max-width:520px;margin:15vh auto;padding:0 20px;line-height:1.5;color:#1c1c1a}</style>
-</head><body><h1 style="font-size:20px">Task Sync</h1>${bodyHtml}</body></html>`;
+</head><body><h1 style="font-size:20px">Taskvane</h1>${bodyHtml}</body></html>`;
 }
 
 /** Success or failure message page. */
 export function resultPage(ok: boolean, message: string): string {
-  return page(ok ? 'Connected' : 'Task Sync', `<p>${ok ? '✅' : '❌'} ${message}</p>`);
+  return page(ok ? 'Connected' : 'Taskvane', `<p>${ok ? '✅' : '❌'} ${message}</p>`);
 }
 
 /**

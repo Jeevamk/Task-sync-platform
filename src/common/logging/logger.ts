@@ -22,6 +22,6 @@ export function createAppLogger(env: NodeJS.ProcessEnv = process.env): ConsoleLo
     json,
     colors: !json && !production,
     timestamp: !json,
-    prefix: 'TaskSync',
+    prefix: 'Taskvane',
   });
 }

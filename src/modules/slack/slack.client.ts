@@ -149,7 +149,7 @@ function slackHint(code: string | undefined): string {
   switch (code) {
     case 'not_in_channel':
     case 'channel_not_found':
-      return ' (invite the bot: /invite @Task Sync)';
+      return ' (invite the bot: /invite @Taskvane)';
     case 'missing_scope':
       return ' (add the scope in the Slack app, then reinstall with Add to Slack)';
     case 'invalid_auth':

@@ -136,9 +136,9 @@ export class TrelloWebhookService {
 
       case 'commentCard': {
         if (!d.text) return null;
-        // Skip comments Task Sync writes itself (they start with "[Task Sync]").
+        // Skip comments Taskvane writes itself (they start with "[Taskvane]").
         const conn = await this.connections.get(organizationId, 'TRELLO');
-        if (conn && action.idMemberCreator === conn.externalId && d.text.startsWith('[Task Sync]')) return null;
+        if (conn && action.idMemberCreator === conn.externalId && d.text.startsWith('[Taskvane]')) return null;
         return { kind: 'comment', text: d.text };
       }
 

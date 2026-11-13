@@ -36,7 +36,7 @@ async function bootstrap(): Promise<void> {
   // Vercel runs this same bootstrap and sets PORT itself.
   const port = Number(process.env.PORT) || config.get<number>('PORT', 3000);
   await app.listen(port);
-  Logger.log(`Task Sync API running on port ${port}  (docs: /docs, health: /health)`, 'Bootstrap');
+  Logger.log(`Taskvane API running on port ${port}  (docs: /docs, health: /health)`, 'Bootstrap');
   Logger.log(
     `Environment ${process.env.NODE_ENV ?? 'development'}, public URL ${config.get<string>('PUBLIC_BASE_URL')}, ` +
       `log level ${process.env.LOG_LEVEL || 'default'}, dev login ${config.get<boolean>('ALLOW_DEV_LOGIN') ? 'ON' : 'off'}`,
