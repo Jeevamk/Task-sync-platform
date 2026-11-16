@@ -76,6 +76,32 @@ You need:
 | Slack admin rights, or permission to install apps | Only for Step 4. |
 | A Google account | To own the sheet and share it with Taskvane. |
 
+### No accounts yet? Start here
+
+Taskvane can't create Trello, Slack or Google **accounts** for you (no provider allows that), but all three are free
+and take a few minutes. After you connect them, Taskvane **creates the board, the sheet and the Slack channel for you**.
+
+The full path, in order. Steps 1 and 2 happen in Taskvane itself; the connect steps need the `orgId` from Step 2.
+
+| Step | What to do | Free signup (if you have no account) |
+| --- | --- | --- |
+| [Step 1: Log in](#step-1-log-in) | `POST /auth/dev-login` (testing) or Google sign-in. Copy the `token`, click **Authorize**. | — |
+| [Step 2: Create your organization](#step-2-create-your-organization) | `POST /orgs`. Copy the `id`: it is your `orgId`. | — |
+| [Step 3: Connect Trello](#step-3-connect-trello) | `POST …/connections/trello/start`, open `authorizeUrl`, **Allow**. | https://trello.com/signup |
+| [Step 4: Add Taskvane to Slack](#step-4-add-taskvane-to-slack) | `POST …/connections/slack/start`, open `authorizeUrl`, **Allow**. | https://slack.com/get-started#/createnew (you become the admin, so you can install apps) |
+| [Step 5: Connect Google](#step-5-prepare-the-google-sheet) | `POST …/connections/google/start`, open `authorizeUrl`, **Allow**. | https://accounts.google.com/signup |
+| [Step 6: Slack channel](#step-6-pick-the-slack-channel) | Nothing to do: you will send `slackChannelId: "new"`. | — |
+| [Step 7: Add your team](#step-7-add-your-team-members) | `POST /orgs/{orgId}/team` for each person (at least one `COORDINATOR`). | — |
+| [Step 8: Create the project](#step-8-create-a-project) | `POST /orgs/{orgId}/projects` with `"new"` (below). | — |
+
+Every `…/start` call also returns these links (`signupUrl`, `howTo`), and **`GET /orgs/{orgId}/setup`** shows
+what is done and what to call next. With all three connected, one call sets up everything
+(see [Step 8, Option C](#step-8-create-a-project)):
+
+```json
+{ "name": "Website Revamp", "trelloBoard": "new", "sheet": "new", "slackChannelId": "new" }
+```
+
 There is no web app yet, so all steps below use the **interactive API page** at **`<API>/docs`**:
 
 1. Open `<API>/docs`.
@@ -168,6 +194,21 @@ Note the **`googleSheets.shareWith`** email: you need it in the next step.
 
 ### Step 5: Prepare the Google Sheet
 
+**Option A (easiest): let Taskvane create it.** Connect your Google account once:
+
+1. `POST /orgs/{orgId}/connections/google/start`
+2. Open the **`authorizeUrl`**, pick your Google account and click **Allow** (keep the Google Drive box ticked).
+3. The page shows **✅ Google connected as …**
+
+Then use `"sheet": "new"` in Step 8. Taskvane creates the sheet **in your own Drive** (you own it) with the
+`Tasks`, `History` and `Import` tabs, and shares it with itself. Taskvane can only see the files it created,
+nothing else in your Drive. You can skip the rest of this step.
+
+> The `Import` tab's **Taskvane** menu (creating cards from the sheet) still needs the Apps Script pasted in by hand:
+> see [Section 5](#option-a-from-the-google-sheet-import-tab).
+
+**Option B: use your own sheet.**
+
 1. Create a new Google Sheet (one sheet per project), e.g. **Website Revamp – Tracker**.
 2. Add a tab named exactly **`Tasks`**. In **row 1**, put the column headers you want.
    Only **`Task ID`** is required. Taskvane fills these columns when they exist (any order, extra columns are fine):
@@ -187,7 +228,13 @@ Note the **`googleSheets.shareWith`** email: you need it in the next step.
 
 ### Step 6: Pick the Slack channel
 
-`GET /orgs/{orgId}/slack/channels` lists the channels of the connected workspace:
+**Easiest:** skip this step and use `"slackChannelId": "new"` in Step 8. Taskvane creates a public channel named
+after the project (or `newChannelName`) and invites you. If a public channel with that name already exists, Taskvane joins it and uses it.
+
+> Connected Slack **before** this feature existed? Click **Add to Slack** again (Step 4) once: creating channels needs
+> two new permissions (`channels:manage`, `channels:join`).
+
+**Or pick an existing channel:** `GET /orgs/{orgId}/slack/channels` lists the channels of the connected workspace:
 
 ```json
 [ { "id": "C0123456789", "name": "proj-website", "is_private": false, "is_member": true } ]
@@ -258,14 +305,31 @@ The response's **`notes`** say what was matched, e.g. *"Trello: Athira Shivaram 
 }
 ```
 
+**Option C: new user, let Taskvane create everything** (needs Trello, Slack and Google connected):
+
+```json
+{
+  "name": "Website Revamp",
+  "trelloBoard": "new",
+  "sheet": "new",
+  "slackChannelId": "new"
+}
+```
+
+Taskvane creates the sheet in your Drive, the `#website-revamp` channel (and invites you), and the board with all 5 lists.
+The response includes `sheetUrl` and `slackChannelId`. If a later step fails, the error lists what was already
+created and the values to retry with, so nothing is made twice.
+
 **All options**
 
 | Field | Notes |
 | --- | --- |
 | `name` | Project name (required). |
 | `trelloBoard` | Board link, short code or ID, or `"new"` (required). |
-| `sheet` | Sheet link or ID (required). One sheet can be used by one project only. |
-| `slackChannelId` | From Step 6 (required). |
+| `sheet` | Sheet link or ID, or `"new"` (needs Connect Google, Step 5) (required). One sheet can be used by one project only. |
+| `slackChannelId` | From Step 6, or `"new"` (required). |
+| `newSheetName` | Only with `sheet: "new"`: the sheet name (default: `Taskvane – <project name>`). |
+| `newChannelName` | Only with `slackChannelId: "new"`: the channel name (default: the project name, e.g. `website-revamp`). |
 | `lists` | Only if your lists have other names, e.g. `{ "IN_PROGRESS": "Doing", "COMPLETED": "Done" }`. Statuses: `TODO`, `ASSIGNED`, `IN_PROGRESS`, `READY_FOR_TESTING`, `COMPLETED`. |
 | `createMissingLists` | `true` = create any status list the board is missing instead of failing. Always on for `"new"`. |
 | `extraLists` | Extra lists such as `["Backlog"]`, created at the **left** of the board if missing. Cards in them are **not tracked** (no sheet row, no Slack). Works for new and existing boards. |
@@ -337,7 +401,7 @@ Good for adding many tasks at once. Only **coordinators** can do this.
    | --- | --- |
    | `API_URL` | `<API>` (no `/` at the end) |
    | `SYNC_SECRET` | The `SHEET_SYNC_SECRET` value (ask whoever runs the backend) |
-4. Reload the sheet. A **Taskvane** menu appears. Click **Taskvane → Set up Import tab** (allow the permissions the first time).
+4. Reload the sheet. A **Taskvane** menu appears. Click **Taskvane → Set up Import tab** (allow the permissions the first time). A sheet Taskvane created with `sheet: "new"` already has the Import tab; running it again is safe.
 
 **Each time**
 
@@ -491,8 +555,18 @@ People are `@mentioned` when their team email matches their Slack account.
 | --- | --- |
 | `401 Unauthorized` on `/orgs/...` | Not logged in or the token expired. Log in again (Step 1) and click **Authorize**. |
 | `403` on an organization | You are not a member of that organization. Check the `orgId` with `GET /orgs`. |
-| `Connect Trello first` / `Add Taskvane to Slack first` | Do Step 3 / Step 4 for **this** organization. |
+| `Connect Trello first` / `Add Taskvane to Slack first` | Do Step 3 / Step 4 for **this** organization. No account yet? See [No accounts yet? Start here](#no-accounts-yet-start-here). |
 | `This connect link expired` | Connect links last 10 minutes and work once. Start the step again. |
+| `Connect Google first …` | You sent sheet: "new" without Google connected. Do step 5 option A (POST …/connections/google/start), or send your own sheet link. |
+| `Connect Google is not set up on this server` | The server has no GOOGLE_OAUTH_CLIENT_SECRET. Ask whoever runs the API, or use your own sheet link. |
+| `The Google connection stopped working. Connect Google again.` | Access was removed in your Google account, or it expired. Connect Google again (step 5). |
+| `Google did not return a refresh token` | Remove Taskvane at myaccount.google.com/permissions, then connect Google again. |
+| `Please allow Taskvane to create files in your Google Drive` | The Google Drive box was unticked on the Google page. Connect again and keep it ticked. |
+| `The sheet was created … but could not be shared` | Share that sheet with the shareWith email as Editor yourself, then create the project with its link. |
+| `Taskvane needs a new Slack permission to create channels` | Your Slack was connected before slackChannelId "new" existed. Click Add to Slack again (step 4), then retry. |
+| `Slack channel name … is taken by a private or archived channel` | Send another newChannelName, or unarchive the channel and pass its id. |
+| `… Already created: sheet …, Slack channel …` | A later step failed. Fix the cause, then retry with the sheet and slackChannelId values in the message instead of "new". |
+| `Warning: you were not found in the Slack workspace` | Your login email is not a member of that Slack workspace. Join the new channel yourself. |
 | `Google Sheets 403 … share the sheet with …` | Share the sheet with the `shareWith` email as **Editor** (Step 5). |
 | `The sheet needs a "Tasks" tab` / `needs a "Task ID" header` | Fix the tab name and row 1 (Step 5). Names must match exactly. |
 | `This sheet is already used by a project` | Use a separate sheet per project. |
@@ -518,10 +592,11 @@ The full, always up-to-date reference with request and response examples is at *
 | --- | --- |
 | Login | `POST /auth/dev-login`, `POST /auth/google`, `GET /auth/me` |
 | Organizations | `POST /orgs`, `GET /orgs`, `GET /orgs/{orgId}` |
-| Connections | `GET /orgs/{orgId}/connections`, `POST …/connections/trello/start`, `POST …/connections/slack/start`, `DELETE …/connections/{provider}` |
+| Setup checklist | `GET /orgs/{orgId}/setup`: every step, done or not, what to call next, and free signup links |
+| Connections | `GET /orgs/{orgId}/connections`, `POST …/connections/trello/start`, `POST …/connections/slack/start`, `POST …/connections/google/start`, `DELETE …/connections/{provider}` (`trello`, `slack` or `google`) |
 | Pickers | `GET /orgs/{orgId}/trello/boards`, `GET /orgs/{orgId}/slack/channels` |
 | Team | `GET /orgs/{orgId}/team`, `POST /orgs/{orgId}/team`, `DELETE /orgs/{orgId}/team/{memberId}` |
-| Projects | `GET/POST /orgs/{orgId}/projects`, `GET/DELETE …/projects/{projectId}`, `GET …/board-members`, `POST …/webhook`, `POST …/import` |
+| Projects | `GET/POST /orgs/{orgId}/projects` (`trelloBoard`, `sheet`, `slackChannelId` each accept `"new"`), `GET/DELETE …/projects/{projectId}`, `GET …/board-members`, `POST …/webhook`, `POST …/import` |
 | Cards | `POST /orgs/{orgId}/projects/{projectId}/cards` |
 | Sheet import (Apps Script) | `POST /webhooks/sheets/import` (header `X-Sync-Secret`) |
 | Trello (called by Trello only) | `POST /webhooks/trello` (signed by Trello; manual calls get `401`) |

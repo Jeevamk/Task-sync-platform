@@ -11,7 +11,7 @@ import { ConnectionsCoreModule } from './modules/connections/connections.module'
 import { ConnectionsApiModule } from './modules/connections/connections-api.module';
 import { TrelloModule } from './modules/trello/trello.module';
 import { SlackModule } from './modules/slack/slack.client';
-import { GoogleModule } from './modules/google/sheets.client';
+import { GoogleModule } from './modules/google/google.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
 import { OutboxModule } from './modules/outbox/outbox.module';
 import { TasksModule } from './modules/tasks/tasks.module';

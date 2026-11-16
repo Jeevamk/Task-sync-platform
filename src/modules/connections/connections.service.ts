@@ -4,10 +4,18 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenCrypto } from '../../common/crypto/token-crypto.service';
 import { maskEmail, shortId } from '../../common/logging/redact';
+import { SIGNUP } from './signup-links';
 
 const STATE_TTL_MS = 10 * 60_000;
 
-/** Each organization's own Trello / Slack account. Tokens are encrypted at rest and never returned by the API. */
+/** What to do when a provider is not connected yet. */
+const NOT_CONNECTED: Record<Provider, string> = {
+  TRELLO: 'Connect Trello first (Connections → Connect Trello)',
+  SLACK: 'Add Taskvane to Slack first (Connections → Add to Slack)',
+  GOOGLE: 'Connect Google first (Connections → Connect Google), or use an existing sheet link instead of "new"',
+};
+
+/** Each organization's own Trello / Slack / Google account. Tokens are encrypted at rest and never returned by the API. */
 @Injectable()
 export class ConnectionsService {
   private readonly logger = new Logger(ConnectionsService.name);
@@ -21,9 +29,7 @@ export class ConnectionsService {
     const c = await this.prisma.connection.findUnique({ where: { organizationId_provider: { organizationId, provider } } });
     if (!c) {
       this.logger.warn(`Org ${shortId(organizationId)}: ${provider} is not connected`);
-      throw new BadRequestException(
-        provider === 'TRELLO' ? 'Connect Trello first (Connections → Connect Trello)' : 'Add Taskvane to Slack first (Connections → Add to Slack)',
-      );
+      throw new BadRequestException(NOT_CONNECTED[provider]);
     }
     try {
       return this.crypto.decrypt(c.encryptedToken);
@@ -44,9 +50,40 @@ export class ConnectionsService {
       const c = rows.find((r) => r.provider === p);
       return c
         ? { connected: true, account: c.externalName, externalId: c.externalId, connectedBy: c.connectedBy, since: c.createdAt }
-        : { connected: false };
+        : { connected: false, ...SIGNUP[p] };
     };
-    return { trello: view('TRELLO'), slack: view('SLACK') };
+    return { trello: view('TRELLO'), slack: view('SLACK'), google: view('GOOGLE') };
+  }
+
+  /** Step-by-step checklist for a new organization: what is done and what to call next. */
+  async setup(organizationId: string) {
+    const [rows, projects] = await Promise.all([
+      this.prisma.connection.findMany({ where: { organizationId }, select: { provider: true, externalName: true } }),
+      this.prisma.project.count({ where: { organizationId } }),
+    ]);
+    const has = (p: Provider) => rows.find((r) => r.provider === p);
+    const base = `/orgs/${organizationId}`;
+    const connect = (p: Provider, label: string, path: string, optional?: string) => {
+      const c = has(p);
+      return c
+        ? { step: label, done: true, account: c.externalName }
+        : { step: label, done: false, next: `POST ${base}/connections/${path}/start`, ...SIGNUP[p], ...(optional ? { optional } : {}) };
+    };
+    const steps = [
+      connect('TRELLO', 'Connect Trello', 'trello'),
+      connect('SLACK', 'Add Taskvane to Slack', 'slack'),
+      connect('GOOGLE', 'Connect Google', 'google', 'Only needed for sheet: "new". Skip it if you share your own sheet.'),
+      projects
+        ? { step: 'Create a project', done: true, projects }
+        : {
+            step: 'Create a project',
+            done: false,
+            next: `POST ${base}/projects`,
+            example: { name: 'My Project', trelloBoard: 'new', sheet: 'new', slackChannelId: 'new' },
+          },
+    ];
+    const pending = steps.find((s) => !s.done && !('optional' in s));
+    return { ready: !pending, nextStep: pending?.step ?? null, steps };
   }
 
   async save(
@@ -76,7 +113,7 @@ export class ConnectionsService {
     this.logger.log(`Org ${shortId(organizationId)}: ${provider} disconnected (${r.count} removed)`);
   }
 
-  /** A one-time value carried through the Trello/Slack "Connect" redirect, so we know which organization started it. */
+  /** A one-time value carried through the Trello/Slack/Google "Connect" redirect, so we know which organization started it. */
   async createState(organizationId: string, provider: Provider, userEmail: string): Promise<string> {
     const state = randomBytes(24).toString('base64url');
     const expired = await this.prisma.oAuthState.deleteMany({ where: { expiresAt: { lt: new Date() } } });

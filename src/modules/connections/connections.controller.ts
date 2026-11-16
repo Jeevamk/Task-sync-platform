@@ -10,7 +10,7 @@ import { escapeHtml, resultPage, trelloCallbackPage } from './connect-pages';
 import { ConnectionsService } from './connections.service';
 import { TrelloCompleteDto } from './dto/trello-complete.dto';
 
-/** Connect each organization's OWN Trello and Slack. */
+/** Connect each organization's OWN Trello, Slack and Google. */
 @ApiTags('Connections')
 @Controller()
 export class ConnectionsController {
@@ -30,6 +30,14 @@ export class ConnectionsController {
     return this.connections.status(orgId);
   }
 
+  /** New user? Shows each setup step, whether it is done, and what to call next (with signup links). */
+  @Get('orgs/:orgId/setup')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, OrgAccessGuard)
+  setup(@Param('orgId') orgId: string) {
+    return this.connections.setup(orgId);
+  }
+
   /** Returns the link to open in the browser: Trello asks the user to allow Taskvane. */
   @Post('orgs/:orgId/connections/trello/start')
   @ApiBearerAuth()
@@ -46,17 +54,25 @@ export class ConnectionsController {
     return this.connectFlow.startSlack(orgId, user.email);
   }
 
+  /** Returns the "Connect Google" link. Only needed so Taskvane can create the project sheet (sheet: "new"). */
+  @Post('orgs/:orgId/connections/google/start')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, OrgAccessGuard)
+  startGoogle(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.connectFlow.startGoogle(orgId, user.email);
+  }
+
   @Delete('orgs/:orgId/connections/:provider')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, OrgAccessGuard)
   async disconnect(@Param('orgId') orgId: string, @Param('provider') provider: string) {
     const p = provider.toUpperCase();
-    if (p !== 'TRELLO' && p !== 'SLACK') throw new BadRequestException('provider must be trello or slack');
+    if (p !== 'TRELLO' && p !== 'SLACK' && p !== 'GOOGLE') throw new BadRequestException('provider must be trello, slack or google');
     await this.connections.remove(orgId, p as Provider);
     return { ok: true };
   }
 
-  // ─────────── Opened by the browser when Trello / Slack send the user back ───────────
+  // ─────────── Opened by the browser when Trello / Slack / Google send the user back ───────────
 
   /** Trello's return address: a small page that reads the token from #token=… and finishes the connection. */
   @Get('connect/trello/callback')
@@ -90,6 +106,24 @@ export class ConnectionsController {
     } catch (err) {
       // The user only sees this page, so the log is the only place the failure is recorded.
       this.logger.warn(`Slack connect failed: ${errMsg(err)}`);
+      return resultPage(false, escapeHtml(err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  /** Google's return address, with ?code=…&state=… (or ?error=… if the user cancelled). */
+  @Get('connect/google/callback')
+  @ApiExcludeEndpoint()
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  async googleCallback(@Query('code') code: string, @Query('state') state: string, @Query('error') error?: string): Promise<string> {
+    if (error) {
+      this.logger.warn(`Google connect cancelled or refused by Google: ${error}`);
+      return resultPage(false, `Google returned: ${escapeHtml(error)}. Close this tab and try again.`);
+    }
+    try {
+      const account = await this.connectFlow.finishGoogle(code, state);
+      return resultPage(true, `Google connected as <b>${escapeHtml(account)}</b>. Taskvane can now create project sheets in your Drive. You can close this tab.`);
+    } catch (err) {
+      this.logger.warn(`Google connect failed: ${errMsg(err)}`);
       return resultPage(false, escapeHtml(err instanceof Error ? err.message : String(err)));
     }
   }

@@ -8,6 +8,10 @@ const { columnLetter, parseSheetId, tabRef } = require('../dist/modules/google/s
 const { parseBoard } = require('../dist/modules/projects/projects.service');
 const { buildDeliveryPlan } = require('../dist/modules/delivery/messages');
 const { DeliveryService } = require('../dist/modules/delivery/delivery.service');
+const { isNew, toSlackChannelName } = require('../dist/modules/projects/project-lists');
+const { TASKS_HEADERS, HISTORY_HEADERS, IMPORT_HEADERS } = require('../dist/modules/google/sheet-template');
+const fs = require('fs');
+const path = require('path');
 
 (async () => {
   // 1. Token encryption
@@ -28,6 +32,15 @@ const { DeliveryService } = require('../dist/modules/delivery/delivery.service')
   assert.strictEqual(parseBoard('https://trello.com/b/AbC12xYz/website-revamp'), 'AbC12xYz');
   assert.strictEqual(parseBoard('AbC12xYz'), 'AbC12xYz');
   console.log('✔ column letters, sheet links, board links');
+
+  // 2b. "new" resources: Slack channel names
+  assert.ok(isNew('new') && isNew(' NEW ') && !isNew('C0123') && !isNew(undefined));
+  assert.strictEqual(toSlackChannelName('Website Revamp!'), 'website-revamp');
+  assert.strictEqual(toSlackChannelName('#Team  QA__2026'), 'team-qa__2026');
+  assert.strictEqual(toSlackChannelName('Café Ünïcode'), 'cafe-unicode');
+  assert.strictEqual(toSlackChannelName('!!!'), '');
+  assert.strictEqual(toSlackChannelName('a'.repeat(100)).length, 80);
+  console.log('✔ Slack channel names for slackChannelId "new"');
 
   // 3. Delivery plan (what goes to the sheet and Slack)
   const event = {
@@ -84,6 +97,17 @@ const { DeliveryService } = require('../dist/modules/delivery/delivery.service')
   await delivery.deliver(event, {}, async () => {});
   assert.deepStrictEqual(calls.at(-1), ['slack', 'o', '1731111111.000100'], 'next event replies in the thread');
   console.log('✔ delivery: safe retries, one Slack thread per task, formulas untouched');
+
+  // 5. The sheet Taskvane creates (sheet: "new") has every column the delivery writes, and the Import tab matches the Apps Script
+  for (const type of ['task.created', 'task.note_added', 'task.status_changed']) {
+    const plan = buildDeliveryPlan({ ...event, type });
+    for (const col of Object.keys(plan.taskRow)) assert.ok(TASKS_HEADERS.includes(col), `Tasks template is missing "${col}"`);
+    for (const col of Object.keys(plan.historyRow)) assert.ok(HISTORY_HEADERS.includes(col), `History template is missing "${col}"`);
+  }
+  const gs = fs.readFileSync(path.join(__dirname, '../apps-script/Import.gs'), 'utf8');
+  const gsHeaders = JSON.parse(gs.match(/const IMPORT_HEADERS = (\[[^\]]*\]);/)[1].replace(/'/g, '"'));
+  assert.deepStrictEqual(IMPORT_HEADERS, gsHeaders, 'Import headers must match apps-script/Import.gs');
+  console.log('✔ new sheet template matches the delivery columns and the Import script');
 
   console.log('All multi-tenant unit tests passed.');
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

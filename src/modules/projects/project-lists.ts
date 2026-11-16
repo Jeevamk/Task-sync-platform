@@ -19,6 +19,25 @@ export function parseBoard(input: string): string {
   return s.match(/trello\.com\/b\/([A-Za-z0-9]+)/)?.[1] ?? s;
 }
 
+/** True when a create-project field asks Taskvane to make the resource ("new"). */
+export function isNew(value: unknown): boolean {
+  return String(value ?? '').trim().toLowerCase() === 'new';
+}
+
+/** "Website Revamp!" → "website-revamp": a valid Slack channel name (lowercase, a-z 0-9 - _, max 80). */
+export function toSlackChannelName(input: string): string {
+  return String(input ?? '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // "é" → "e": drop the accent marks NFKD split off
+    .toLowerCase()
+    .replace(/^#/, '')
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+    .replace(/-+$/, '');
+}
+
 /** Case- and space-insensitive name comparison. */
 export function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();

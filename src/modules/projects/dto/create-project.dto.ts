@@ -43,17 +43,40 @@ export class CreateProjectDto {
   @IsString()
   trelloWorkspaceId?: string;
 
-  @ApiProperty({ example: 'https://docs.google.com/spreadsheets/d/1Qqwr…/edit', description: 'Sheet link or ID' })
+  @ApiProperty({
+    example: 'new',
+    description: 'Sheet link or ID (shared with the Taskvane service account), or "new" to create one in your Drive (needs Connect Google)',
+  })
   @Transform(trim)
   @IsString()
-  @IsNotEmpty({ message: 'sheet is required: the Google Sheet link' })
+  @IsNotEmpty({ message: 'sheet is required: the Google Sheet link, or "new"' })
   sheet!: string;
 
-  @ApiProperty({ example: 'C0123456789', description: 'From GET …/slack/channels' })
+  @ApiPropertyOptional({
+    example: 'Taskvane – Website Revamp',
+    description: 'Only with sheet "new": the sheet name (default: "Taskvane – <project name>")',
+  })
+  @IsOptional()
   @Transform(trim)
   @IsString()
-  @IsNotEmpty({ message: 'slackChannelId is required (get it from GET /orgs/{orgId}/slack/channels)' })
+  @MaxLength(100)
+  newSheetName?: string;
+
+  @ApiProperty({ example: 'new', description: 'Channel ID from GET …/slack/channels, or "new" to create a public channel' })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty({ message: 'slackChannelId is required: a channel ID from GET /orgs/{orgId}/slack/channels, or "new"' })
   slackChannelId!: string;
+
+  @ApiPropertyOptional({
+    example: 'website-revamp',
+    description: 'Only with slackChannelId "new": the channel name (default: the project name, e.g. "website-revamp")',
+  })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(80)
+  newChannelName?: string;
 
   @ApiPropertyOptional({
     example: ['Backlog'],

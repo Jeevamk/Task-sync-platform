@@ -1,4 +1,4 @@
-import { Global, Injectable, Logger, Module } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JWT } from 'google-auth-library';
 
@@ -135,7 +135,3 @@ export class SheetsClient {
     return (text ? JSON.parse(text) : null) as T;
   }
 }
-
-@Global()
-@Module({ providers: [SheetsClient], exports: [SheetsClient] })
-export class GoogleModule {}

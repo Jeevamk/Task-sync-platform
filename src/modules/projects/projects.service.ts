@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { errMsg } from '../../common/logging/redact';
 import { PrismaService } from '../../prisma/prisma.service';
+import { GoogleOAuthClient } from '../google/google-oauth.client';
+import { SheetSetupService } from '../google/sheet-setup.service';
 import { parseSheetId, SheetsClient } from '../google/sheets.client';
 import { OutboxService } from '../outbox/outbox.service';
 import { SlackClient, SlackError } from '../slack/slack.client';
@@ -10,7 +12,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { TrelloApi, TrelloClient } from '../trello/trello.client';
 import { Board, BoardSetupService } from './board-setup.service';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { DEFAULT_LISTS, parseBoard, validateListNames } from './project-lists';
+import { DEFAULT_LISTS, isNew, parseBoard, toSlackChannelName, validateListNames } from './project-lists';
 
 // Kept here as well, so existing imports (and the unit tests) keep working.
 export { DEFAULT_LISTS, parseBoard } from './project-lists';
@@ -28,6 +30,8 @@ export class ProjectsService {
     private readonly outbox: OutboxService,
     private readonly boardSetup: BoardSetupService,
     private readonly config: ConfigService,
+    private readonly google: GoogleOAuthClient,
+    private readonly sheetSetup: SheetSetupService,
   ) {}
 
   // ─────────────────────────── Read ───────────────────────────
@@ -63,17 +67,17 @@ export class ProjectsService {
   // ─────────────────────────── Create ───────────────────────────
 
   /**
-   * Creates a project from the customer's own board, sheet and Slack channel.
-   * Everything is CHECKED first; Trello is only changed once the sheet and channel are fine,
-   * so a failed request never leaves a half-made board behind.
+   * Creates a project from the customer's own board, sheet and Slack channel — or makes any of them ("new").
+   * Everything is CHECKED first; nothing is created until every check passed. New things are then made in the
+   * order sheet → channel → board, and if a later step fails the error says what was already made.
    */
-  async create(organizationId: string, input: CreateProjectDto) {
+  async create(organizationId: string, input: CreateProjectDto, userEmail?: string) {
     const started = Date.now();
     const what = `project "${String(input?.name ?? '').trim()}" for org ${organizationId}`;
     this.logger.log(`Creating ${what} (board: ${this.wantsNewBoard(input) ? 'new' : 'existing'})`);
 
     try {
-      const result = await this.createProject(organizationId, input);
+      const result = await this.createProject(organizationId, input, userEmail);
       for (const note of result.warnings) this.logger.warn(`${what}: ${note}`);
       this.logger.log(
         `Created ${what} in ${Date.now() - started}ms: id ${result.project.id}, board ${result.project.boardUrl}, ` +
@@ -89,7 +93,7 @@ export class ProjectsService {
     }
   }
 
-  private async createProject(organizationId: string, input: CreateProjectDto) {
+  private async createProject(organizationId: string, input: CreateProjectDto, userEmail?: string) {
     const notes: string[] = []; // returned to the customer as "warnings"
     const name = String(input?.name ?? '').trim();
     if (!name) throw new BadRequestException('name is required');
@@ -99,23 +103,45 @@ export class ProjectsService {
     const trello = await this.trello.forOrg(organizationId);
 
     // 1. Check everything (nothing is changed yet)
+    const newSheet = isNew(input.sheet);
+    const newChannel = isNew(input.slackChannelId);
     const existingBoard = this.wantsNewBoard(input) ? null : await this.checkExistingBoard(trello, input.trelloBoard);
-    const sheet = await this.checkSheet(input.sheet, notes);
-    const channel = await this.checkSlackChannel(organizationId, input.slackChannelId);
+    let sheet = newSheet ? null : await this.checkSheet(input.sheet, notes);
+    let channel = newChannel ? null : await this.checkSlackChannel(organizationId, input.slackChannelId);
+    const channelName = newChannel ? this.newChannelName(input, name) : '';
+    if (newSheet) await this.google.accessTokenForOrg(organizationId); // Google connected and still working
+    if (newChannel) await this.slack.forOrg(organizationId); // Slack connected
 
-    // 2. Set up the Trello board
-    const board: Board =
-      existingBoard ??
-      (await this.boardSetup.createBoard(
-        trello,
-        organizationId,
-        String(input.newBoardName ?? '').trim() || name,
-        input.trelloWorkspaceId?.trim() || undefined,
-        notes,
-      ));
-    const createMissing = !existingBoard || input.createMissingLists === true; // a new board always gets every list
-    const listMap = await this.boardSetup.mapStatusLists(trello, board.id, statusLists, createMissing, notes);
-    await this.boardSetup.addExtraLists(trello, board.id, extraLists, notes);
+    // 2. Make what was asked for ("new"), then set up the Trello board
+    const made: string[] = []; // told to the customer if a later step fails
+    let board: Board;
+    let listMap: Awaited<ReturnType<BoardSetupService['mapStatusLists']>>;
+    try {
+      if (!sheet) {
+        const created = await this.sheetSetup.createProjectSheet(organizationId, String(input.newSheetName ?? '').trim() || `Taskvane – ${name}`);
+        made.push(`sheet "${created.title}" (use sheet: "${created.id}")`);
+        sheet = await this.checkSheet(created.id, notes);
+      }
+      if (!channel) {
+        channel = await this.createChannel(organizationId, channelName, userEmail, notes);
+        made.push(`Slack channel #${channel.name} (use slackChannelId: "${channel.id}")`);
+      }
+      board =
+        existingBoard ??
+        (await this.boardSetup.createBoard(
+          trello,
+          organizationId,
+          String(input.newBoardName ?? '').trim() || name,
+          input.trelloWorkspaceId?.trim() || undefined,
+          notes,
+        ));
+      const createMissing = !existingBoard || input.createMissingLists === true; // a new board always gets every list
+      listMap = await this.boardSetup.mapStatusLists(trello, board.id, statusLists, createMissing, notes);
+      await this.boardSetup.addExtraLists(trello, board.id, extraLists, notes);
+    } catch (err) {
+      if (!made.length) throw err;
+      throw new BadRequestException(`${errMsg(err)}. Already created: ${made.join(', ')}. Fix the problem and try again with those values.`);
+    }
 
     // 3. Save
     const project = await this.prisma.project.create({
@@ -144,7 +170,9 @@ export class ProjectsService {
         board: board.name,
         boardUrl: board.url,
         sheet: sheet.title,
+        sheetUrl: `https://docs.google.com/spreadsheets/d/${sheet.id}/edit`,
         slackChannel: `#${channel.name}`,
+        slackChannelId: channel.id,
       },
       webhook,
       imported,
@@ -153,7 +181,42 @@ export class ProjectsService {
   }
 
   private wantsNewBoard(input: CreateProjectDto): boolean {
-    return String(input?.trelloBoard ?? '').trim().toLowerCase() === 'new';
+    return isNew(input?.trelloBoard);
+  }
+
+  /** The name for slackChannelId "new": newChannelName or the project name, made Slack-safe. */
+  private newChannelName(input: CreateProjectDto, projectName: string): string {
+    const channelName = toSlackChannelName(String(input.newChannelName ?? '').trim() || projectName);
+    if (!channelName) throw new BadRequestException('Could not make a Slack channel name from the project name: send newChannelName, e.g. "my-project"');
+    return channelName;
+  }
+
+  /** slackChannelId "new": create (or reuse) the channel and invite the person creating the project. */
+  private async createChannel(organizationId: string, channelName: string, userEmail: string | undefined, notes: string[]) {
+    const slack = await this.slack.forOrg(organizationId);
+    const made = await slack.createChannel(channelName).catch((err: unknown) => {
+      const code = err instanceof SlackError ? err.code : String(err);
+      throw new BadRequestException(
+        code === 'missing_scope'
+          ? 'Taskvane needs a new Slack permission to create channels: click Add to Slack again, then retry'
+          : code === 'name_taken'
+            ? `Slack channel name #${channelName} is taken by a private or archived channel: send another newChannelName`
+            : `Could not create Slack channel #${channelName}: ${code}`,
+      );
+    });
+    this.logger.log(`Slack channel #${made.name} (${made.id}) ${made.created ? 'created' : 'already existed, joined'}`);
+    if (!made.created) notes.push(`Slack channel #${made.name} already existed: Taskvane joined it and will post there`);
+
+    if (userEmail) {
+      try {
+        const user = await slack.lookupUserByEmail(userEmail);
+        if (user) await slack.invite(made.id, [user.id]);
+        else notes.push(`You (${userEmail}) were not found in the Slack workspace: join #${made.name} yourself`);
+      } catch (err) {
+        notes.push(`Could not invite you to #${made.name}: ${errMsg(err)}. Join it yourself`);
+      }
+    }
+    return this.checkSlackChannel(organizationId, made.id);
   }
 
   /** The board exists, the connected Trello account can see it, and no other project uses it. */

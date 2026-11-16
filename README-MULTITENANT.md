@@ -70,11 +70,21 @@ Replace `<PUBLIC_BASE_URL>` with your ngrok address now (later your Vercel addre
 **Slack** (api.slack.com/apps → Taskvane)
 1. **OAuth & Permissions → Redirect URLs → Add** `<PUBLIC_BASE_URL>/connect/slack/callback` → **Save URLs**.
 2. **OAuth & Permissions → Bot Token Scopes**: make sure these exist:
-   `chat:write, chat:write.public, commands, users:read, users:read.email, im:write, channels:read, groups:read`
+   `chat:write, chat:write.public, commands, users:read, users:read.email, im:write, channels:read, groups:read, channels:manage, channels:join`
+   (`channels:manage` and `channels:join` are for `slackChannelId: "new"`; workspaces connected before must click **Add to Slack** again.)
 3. **Manage Distribution → Activate Public Distribution** (needed so *other* workspaces can install it).
    Slack shows a short checklist (HTTPS redirect URL, no hard-coded tokens) — tick it and activate.
 
-**Google** — nothing to change: customers share their sheet with `GOOGLE_SERVICE_ACCOUNT_EMAIL`.
+**Google** — customers either share their own sheet with `GOOGLE_SERVICE_ACCOUNT_EMAIL`, or use **Connect Google** and
+`sheet: "new"` (Taskvane creates the sheet in the customer's Drive). For Connect Google, in Google Cloud Console:
+
+1. **APIs & Services → Library**: enable **Google Sheets API** and **Google Drive API**.
+2. **OAuth consent screen**: add the scope `https://www.googleapis.com/auth/drive.file` (plus `openid`, `email`).
+   While the app is in *Testing*, only the listed test users can connect.
+3. **Credentials → your OAuth client (Web application) → Authorized redirect URIs**: add
+   `<PUBLIC_BASE_URL>/connect/google/callback`.
+4. Put the client's secret in `.env` as `GOOGLE_OAUTH_CLIENT_SECRET` (the client ID is `GOOGLE_OAUTH_CLIENT_ID`).
+5. Apply the migration that adds the `GOOGLE` provider: `npx prisma migrate deploy` (or `npm run prisma:migrate` locally).
 
 ---
 

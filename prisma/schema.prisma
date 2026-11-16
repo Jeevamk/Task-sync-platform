@@ -25,10 +25,11 @@ enum OrgRole {
   COORDINATOR
 }
 
-/// Tools an organization connects with its own account
+/// Tools an organization connects with its own account (GOOGLE: only used to create the project sheet in the user's Drive)
 enum Provider {
   TRELLO
   SLACK
+  GOOGLE
 }
 
 enum TaskStatus {

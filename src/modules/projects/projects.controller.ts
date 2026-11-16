@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AuthUser, CurrentUser } from '../../common/auth/auth-user';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { OrgAccessGuard } from '../../common/auth/org-access.guard';
 import { CreateCardDto, CreatedCardDto } from './dto/create-card.dto';
@@ -37,8 +38,14 @@ export class ProjectsController {
   }
 
   @Post('projects')
-  create(@Param('orgId') orgId: string, @Body() body: CreateProjectDto) {
-    return this.projects.create(orgId, body);
+  @ApiOperation({
+    summary: 'Create a project',
+    description:
+      'New user? Send "new" for trelloBoard, sheet and slackChannelId and Taskvane creates all three ' +
+      '(needs Trello, Slack and Google connected: see GET /orgs/{orgId}/setup).',
+  })
+  create(@Param('orgId') orgId: string, @Body() body: CreateProjectDto, @CurrentUser() user: AuthUser) {
+    return this.projects.create(orgId, body, user.email);
   }
 
   @Get('projects/:projectId')

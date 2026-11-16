@@ -12,6 +12,9 @@ export const SLACK_SCOPES = [
   'im:write',
   'channels:read',
   'groups:read',
+  // slackChannelId: "new" — create the project channel, join it, invite the person who made the project
+  'channels:manage',
+  'channels:join',
 ].join(',');
 
 const logger = new Logger('SlackApi');
@@ -54,6 +57,35 @@ export class SlackApi {
   async channelInfo(channel: string): Promise<{ id: string; name: string; is_private: boolean; is_member: boolean }> {
     const r = await this.call<{ channel: { id: string; name: string; is_private: boolean; is_member: boolean } }>('conversations.info', { channel });
     return r.channel;
+  }
+
+  /**
+   * Creates a public channel for a new project. If the name is taken, the existing public channel
+   * with that name is joined and used instead (so retrying a failed project creation is safe).
+   */
+  async createChannel(name: string): Promise<{ id: string; name: string; created: boolean }> {
+    try {
+      const r = await this.call<{ channel: { id: string; name: string } }>('conversations.create', { name, is_private: false });
+      return { id: r.channel.id, name: r.channel.name, created: true };
+    } catch (err) {
+      if (!(err instanceof SlackError) || err.code !== 'name_taken') throw err;
+      const existing = (await this.listChannels()).find((c) => c.name === name && !c.is_private);
+      if (!existing) throw err; // taken by a private or archived channel we can't use
+      if (!existing.is_member) await this.call('conversations.join', { channel: existing.id });
+      logger.debug(`Slack channel #${name} already existed: joined it`);
+      return { id: existing.id, name: existing.name, created: false };
+    }
+  }
+
+  /** Adds people to a channel. already_in_channel is fine. */
+  async invite(channel: string, userIds: string[]): Promise<void> {
+    if (!userIds.length) return;
+    try {
+      await this.call('conversations.invite', { channel, users: userIds.join(',') });
+    } catch (err) {
+      if (err instanceof SlackError && err.code === 'already_in_channel') return;
+      throw err;
+    }
   }
 
   async lookupUserByEmail(email: string): Promise<{ id: string; name: string } | null> {
@@ -158,6 +190,12 @@ function slackHint(code: string | undefined): string {
       return ' (the workspace must click Add to Slack again)';
     case 'bad_redirect_uri':
       return ' (add PUBLIC_BASE_URL/connect/slack/callback to the Slack app Redirect URLs)';
+    case 'name_taken':
+      return ' (a private or archived channel already uses this name: pick another newChannelName)';
+    case 'invalid_name_specials':
+    case 'invalid_name_maxlength':
+    case 'invalid_name':
+      return ' (channel names: lowercase letters, numbers, - and _, max 80 characters)';
     case 'ratelimited':
       return ' (Slack rate limit: will be retried)';
     default:

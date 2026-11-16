@@ -23,6 +23,8 @@ export const envValidationSchema = Joi.object({
   /** Login */
   JWT_SECRET: Joi.string().min(32).required(),
   GOOGLE_OAUTH_CLIENT_ID: Joi.string().allow('').optional(),
+  /** Same OAuth client: only needed for "Connect Google" (Taskvane creates the project sheet in the user's Drive). */
+  GOOGLE_OAUTH_CLIENT_SECRET: Joi.string().allow('').optional(),
   /** Local testing only: allows POST /auth/dev-login without Google. Never true in production. */
   ALLOW_DEV_LOGIN: Joi.boolean().default(false),
 
