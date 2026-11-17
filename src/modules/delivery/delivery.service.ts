@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 import { SheetsClient } from '../google/sheets.client';
 import { SlackClient } from '../slack/slack.client';
 import { buildDeliveryPlan, TaskEventPayload } from './messages';
@@ -21,7 +21,7 @@ export class DeliveryService {
   private readonly logger = new Logger(DeliveryService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly sheets: SheetsClient,
     private readonly slack: SlackClient,
     private readonly config: ConfigService,
@@ -82,7 +82,7 @@ export class DeliveryService {
 
   private async postToSlack(event: TaskEventPayload, text: { parentText: string; threadText: string | null; broadcast: boolean }): Promise<void> {
     // Read the thread at send time: an earlier event may have just created it.
-    const task = await this.prisma.task.findUnique({ where: { id: event.task.id }, select: { slackThreadTs: true } });
+    const task = await this.db.tasks.findOne({ _id: event.task.id }, { slackThreadTs: 1 });
     const threadTs = task?.slackThreadTs ?? null;
     if (threadTs && !text.threadText) {
       this.logger.debug(`${event.task.key}: nothing to post in Slack for ${event.type}`);
@@ -101,7 +101,7 @@ export class DeliveryService {
     }
     const posted = await api.postMessage({ channel: event.project.slackChannelId, text: text.parentText });
     this.logger.debug(`${event.task.key}: started a Slack thread in ${event.project.slackChannelId}`);
-    await this.prisma.task.updateMany({ where: { id: event.task.id, slackThreadTs: null }, data: { slackThreadTs: posted.ts } });
+    await this.db.tasks.updateOne({ _id: event.task.id, slackThreadTs: null }, { $set: { slackThreadTs: posted.ts } });
   }
 
   private async forwardToN8n(event: TaskEventPayload): Promise<void> {

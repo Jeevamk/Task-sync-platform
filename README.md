@@ -612,16 +612,14 @@ The full, always up-to-date reference with request and response examples is at *
 
 ## For developers
 
-Installing, `.env`, running locally with Docker and ngrok, and deploying to Vercel: **[README-MULTITENANT.md](README-MULTITENANT.md)**.
+Installing, `.env`, running locally with MongoDB and ngrok, and deploying to Vercel: **[README-MULTITENANT.md](README-MULTITENANT.md)**.
 
 Quick start:
 
 ```bash
 npm install
 cp .env.example .env          # fill it in (see README-MULTITENANT.md, Part A)
-docker compose up -d          # PostgreSQL (+ optional n8n)
-npx prisma migrate dev
+                              # set MONGODB_URI (Atlas or local MongoDB); indexes are created on startup
 npm run start:dev             # API on http://localhost:3000, docs at /docs
-npm run prisma:studio         # browse the database at http://localhost:5555
 npm test                      # self-tests
 ```

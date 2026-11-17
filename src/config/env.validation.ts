@@ -14,8 +14,12 @@ export const envValidationSchema = Joi.object({
   /** Where the coordinator web app runs (used after "Connect" redirects). Optional until Step 7. */
   WEB_APP_URL: Joi.string().uri().allow('').optional(),
 
-  DATABASE_URL: Joi.string().uri({ scheme: ['postgresql', 'postgres'] }).required(),
-  DIRECT_URL: Joi.string().uri({ scheme: ['postgresql', 'postgres'] }).required(),
+  /** MongoDB connection string, e.g. mongodb+srv://user:pass@cluster.mongodb.net/taskvane (Atlas). */
+  MONGODB_URI: Joi.string()
+    .pattern(/^mongodb(\+srv)?:\/\//, 'mongodb:// or mongodb+srv://')
+    .required(),
+  /** Database name. Optional: defaults to the name in MONGODB_URI, else "taskvane". */
+  MONGODB_DB: Joi.string().allow('').optional(),
 
   /** 32-byte key (64 hex characters) that encrypts every customer's Trello/Slack token in the database. */
   TOKEN_ENCRYPTION_KEY: Joi.string().hex().length(64).required(),

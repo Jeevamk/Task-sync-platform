@@ -6,7 +6,7 @@ import { HealthService } from './health.service';
 export class HealthController {
   constructor(private readonly health: HealthService) {}
 
-  /** GET /health - 200 when PostgreSQL, Redis and n8n all respond, otherwise 503. */
+  /** GET /health - 200 when MongoDB responds, otherwise 503 (n8n is reported but optional). */
   @Get()
   async get(@Res() res: Response): Promise<void> {
     const report = await this.health.check();

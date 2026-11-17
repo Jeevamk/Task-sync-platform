@@ -1,7 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma, TaskStatus } from '@prisma/client';
 import { maskEmail } from '../../common/logging/redact';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
+import { insertOne, isDuplicateKey } from '../../database/helpers';
+import type { TaskStatus } from '../../database/types';
 import { norm, toTrelloDue } from '../trello/card-fields';
 import { TrelloApi, TrelloClient } from '../trello/trello.client';
 import { ImportRequestDto, ImportResponseDto, ImportRowDto, ImportRowResult, MAX_IMPORT_ROWS } from './dto/import-request.dto';
@@ -12,7 +13,7 @@ export class CardImportService {
   private readonly logger = new Logger(CardImportService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly trello: TrelloClient,
   ) {}
 
@@ -22,7 +23,7 @@ export class CardImportService {
     if (req.rows.length > MAX_IMPORT_ROWS) throw new BadRequestException(`At most ${MAX_IMPORT_ROWS} rows per import`);
 
     // 1. Which project is this sheet for?
-    const project = await this.prisma.project.findFirst({ where: { sheetId: req.sheetId, active: true } });
+    const project = await this.db.projects.findOne({ sheetId: req.sheetId, active: true });
     if (!project) {
       this.logger.warn(`Sheet import refused: sheet ${req.sheetId} is not linked to an active project`);
       throw new NotFoundException('This sheet is not linked to an active project (check sheetId in config/project.json)');
@@ -31,9 +32,7 @@ export class CardImportService {
     // 2. Only coordinators of THIS organization may create cards.
     const email = (req.editorEmail ?? '').trim().toLowerCase();
     const editor = email
-      ? await this.prisma.teamMember.findFirst({
-          where: { organizationId: project.organizationId, email: { equals: email, mode: 'insensitive' } },
-        })
+      ? await this.db.teamMembers.findOne({ organizationId: project.organizationId, email }) // emails are saved in lower case
       : null;
     if (!editor) {
       this.logger.warn(`[${project.name}] Sheet import refused: ${maskEmail(email) || 'no editor email'} is not in the team list`);
@@ -46,7 +45,7 @@ export class CardImportService {
     const [lists, labels, team] = await Promise.all([
       trello.getBoardLists(project.trelloBoardId),
       trello.getBoardLabels(project.trelloBoardId),
-      this.prisma.teamMember.findMany({ where: { organizationId: project.organizationId, active: true } }),
+      this.db.teamMembers.find({ organizationId: project.organizationId, active: true }),
     ]);
     const openLists = lists.filter((l: { closed: boolean }) => !l.closed);
     const listMap = (project.listMap ?? {}) as Record<string, TaskStatus>;
@@ -86,9 +85,7 @@ export class CardImportService {
 
     // Never create the same row twice.
     const externalId = `import:${sheetId}:${row.key}`;
-    const done = await this.prisma.processedEvent.findUnique({
-      where: { source_externalId: { source: 'SHEET', externalId } },
-    });
+    const done = await this.db.processedEvents.findOne({ source: 'SHEET', externalId });
     if (done) return { ...base, ok: true, status: 'already-created' };
 
     const warnings: string[] = [];
@@ -139,8 +136,8 @@ export class CardImportService {
         idMembers: memberId ? [memberId] : undefined,
         idLabels,
       });
-      await this.prisma.processedEvent.create({ data: { source: 'SHEET', externalId } }).catch((err: unknown) => {
-        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+      await insertOne(this.db.processedEvents, { source: 'SHEET', externalId }).catch((err: unknown) => {
+        if (!isDuplicateKey(err)) throw err;
       });
       return { ...base, ok: true, status: 'created', cardUrl: card.shortUrl, warnings: warnings.length ? warnings : undefined };
     } catch (err) {

@@ -35,6 +35,8 @@ New tables: `organizations`, `users`, `memberships`, `connections` (encrypted to
 
    | Variable | Where it comes from |
    | --- | --- |
+   | `MONGODB_URI` | Atlas → your cluster → **Connect → Drivers** (`mongodb+srv://…/taskvane`), or `mongodb://localhost:27017/taskvane` locally. Replaces `DATABASE_URL` / `DIRECT_URL` (delete those) |
+   | `MONGODB_DB` | Optional database name (defaults to the one in `MONGODB_URI`, else `taskvane`) |
    | `TOKEN_ENCRYPTION_KEY` | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
    | `JWT_SECRET` | Generate the same way |
    | `ALLOW_DEV_LOGIN=true` | Local only |
@@ -44,12 +46,8 @@ New tables: `organizations`, `users`, `memberships`, `connections` (encrypted to
    You can delete `TRELLO_TOKEN` and `SLACK_BOT_TOKEN` (customers connect their own now).
    Keep `TRELLO_API_KEY` and `TRELLO_APP_SECRET` (your app).
 
-5. **Reset the local database** (test data only) and create the new tables:
-   ```powershell
-   docker compose up -d
-   npx prisma migrate reset --force
-   npm run prisma:migrate -- --name multi-tenant
-   ```
+5. **Database**: point `MONGODB_URI` at an Atlas cluster or a local MongoDB. Nothing to migrate: the API creates
+   its collections and indexes when it starts.
 6. Check:
    ```powershell
    npm test            # signature, unit and app-level self-tests
@@ -84,7 +82,6 @@ Replace `<PUBLIC_BASE_URL>` with your ngrok address now (later your Vercel addre
 3. **Credentials → your OAuth client (Web application) → Authorized redirect URIs**: add
    `<PUBLIC_BASE_URL>/connect/google/callback`.
 4. Put the client's secret in `.env` as `GOOGLE_OAUTH_CLIENT_SECRET` (the client ID is `GOOGLE_OAUTH_CLIENT_ID`).
-5. Apply the migration that adds the `GOOGLE` provider: `npx prisma migrate deploy` (or `npm run prisma:migrate` locally).
 
 ---
 
@@ -153,6 +150,7 @@ Delivery no longer needs n8n. To also send every event to your own n8n workflow,
 ## Deploying (Vercel)
 
 Set **all** `.env` values in Vercel → Project → Settings → Environment Variables, with:
-`PUBLIC_BASE_URL=https://<your-app>.vercel.app`, `ALLOW_DEV_LOGIN=false`, `NODE_ENV=production`, Neon `DATABASE_URL` / `DIRECT_URL`.
-Then add the Vercel address to Trello **Allowed origins** and the Slack **Redirect URL** (Part B), and run
-`npx prisma migrate deploy` against Neon.
+`PUBLIC_BASE_URL=https://<your-app>.vercel.app`, `ALLOW_DEV_LOGIN=false`, `NODE_ENV=production`, and your Atlas
+`MONGODB_URI` (`mongodb+srv://…`). In Atlas → **Network Access**, allow `0.0.0.0/0` (Vercel has no fixed IP addresses).
+Then add the Vercel address to Trello **Allowed origins** and the Slack **Redirect URL** (Part B).
+There is no migrate step: the API creates its indexes when it starts.

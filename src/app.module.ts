@@ -4,7 +4,7 @@ import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { ErrorReasonFilter } from './common/logging/error-reason.filter';
 import { createValidationPipe } from './common/validation/validation.pipe';
 import { envValidationSchema } from './config/env.validation';
-import { PrismaModule } from './prisma/prisma.module';
+import { DatabaseModule } from './database/database.module';
 import { CryptoModule } from './common/crypto/token-crypto.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { ConnectionsCoreModule } from './modules/connections/connections.module';
@@ -31,7 +31,7 @@ import { SheetsModule } from './modules/sheets/sheets.module';
       validationOptions: { abortEarly: false },
     }),
     // core (global)
-    PrismaModule,
+    DatabaseModule,
     CryptoModule,
     AuthModule,
     ConnectionsCoreModule,

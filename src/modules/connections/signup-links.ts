@@ -1,4 +1,4 @@
-import { Provider } from '@prisma/client';
+import { Provider } from '../../database/types';
 
 /**
  * Where a brand-new user creates a free account before connecting it.

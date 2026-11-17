@@ -1,8 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
 import { errMsg } from '../../common/logging/redact';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
+import { insertOne } from '../../database/helpers';
 import { GoogleOAuthClient } from '../google/google-oauth.client';
 import { SheetSetupService } from '../google/sheet-setup.service';
 import { parseSheetId, SheetsClient } from '../google/sheets.client';
@@ -22,7 +22,7 @@ export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly trello: TrelloClient,
     private readonly slack: SlackClient,
     private readonly sheets: SheetsClient,
@@ -36,16 +36,18 @@ export class ProjectsService {
 
   // ─────────────────────────── Read ───────────────────────────
 
-  list(organizationId: string) {
-    return this.prisma.project.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { tasks: true } } },
-    });
+  async list(organizationId: string) {
+    const projects = await this.db.projects.find({ organizationId }, null, { sort: { createdAt: -1 } });
+    const counts = await this.db.tasks.aggregate<{ _id: string; n: number }>([
+      { $match: { projectId: { $in: projects.map((p) => p.id) } } },
+      { $group: { _id: '$projectId', n: { $sum: 1 } } },
+    ]);
+    const tasksIn = new Map(counts.map((c) => [c._id, c.n]));
+    return projects.map((p) => ({ ...p, _count: { tasks: tasksIn.get(p.id) ?? 0 } }));
   }
 
   async get(organizationId: string, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, organizationId } });
+    const project = await this.db.projects.findOne({ _id: projectId, organizationId });
     if (!project) throw new NotFoundException('Project not found');
     return project;
   }
@@ -144,16 +146,14 @@ export class ProjectsService {
     }
 
     // 3. Save
-    const project = await this.prisma.project.create({
-      data: {
-        organizationId,
-        name,
-        trelloBoardId: board.id,
-        listMap,
-        sheetId: sheet.id,
-        slackChannelId: channel.id,
-        settings: (input.settings ?? {}) as Prisma.InputJsonValue,
-      },
+    const project = await insertOne(this.db.projects, {
+      organizationId,
+      name,
+      trelloBoardId: board.id,
+      listMap,
+      sheetId: sheet.id,
+      slackChannelId: channel.id,
+      settings: (input.settings ?? {}) as Record<string, unknown>,
     });
 
     // 4. Start syncing: webhook + existing cards
@@ -224,7 +224,7 @@ export class ProjectsService {
     const board = await trello.getBoard(parseBoard(boardInput)).catch(() => {
       throw new BadRequestException('Trello board not found, or the connected Trello account is not a member of it');
     });
-    if (await this.prisma.project.findUnique({ where: { trelloBoardId: board.id } })) {
+    if (await this.db.projects.findOne({ trelloBoardId: board.id }, { _id: 1 })) {
       throw new ConflictException('This board is already used by a project');
     }
     this.logger.debug(`Board OK: "${board.name}" (${board.id})`);
@@ -235,7 +235,7 @@ export class ProjectsService {
   private async checkSheet(sheetInput: string, notes: string[]): Promise<{ id: string; title: string }> {
     const sheetId = parseSheetId(sheetInput);
     if (!sheetId) throw new BadRequestException('sheet must be a Google Sheets link or ID');
-    if (await this.prisma.project.findUnique({ where: { sheetId } })) {
+    if (await this.db.projects.findOne({ sheetId }, { _id: 1 })) {
       throw new ConflictException('This sheet is already used by a project');
     }
 
@@ -292,7 +292,7 @@ export class ProjectsService {
       this.logger.warn(`[${project.name}] Trello webhook registration to ${callback} failed: ${err.message}`);
       throw err;
     });
-    await this.prisma.project.update({ where: { id: project.id }, data: { trelloWebhookId: hook.id } });
+    await this.db.projects.updateOne({ _id: project.id }, { $set: { trelloWebhookId: hook.id } });
     this.logger.log(`[${project.name}] Trello webhook ${hook.id} registered -> ${callback}`);
     return { id: hook.id, callback };
   }
@@ -346,7 +346,7 @@ export class ProjectsService {
       }
     }
 
-    await this.prisma.project.update({ where: { id: project.id }, data: { active: false, trelloWebhookId: null } });
+    await this.db.projects.updateOne({ _id: project.id }, { $set: { active: false, trelloWebhookId: null } });
     this.logger.log(`[${project.name}] Project ${project.id} deactivated (sync stopped, data kept)`);
     return { ok: true };
   }

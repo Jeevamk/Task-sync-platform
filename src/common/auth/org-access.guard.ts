@@ -1,5 +1,5 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 import { maskEmail, shortId } from '../logging/redact';
 import type { AuthedRequest } from './auth-user';
 
@@ -11,15 +11,13 @@ import type { AuthedRequest } from './auth-user';
 export class OrgAccessGuard implements CanActivate {
   private readonly logger = new Logger(OrgAccessGuard.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly db: DatabaseService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<AuthedRequest>();
     const orgId = String(req.params.orgId ?? '');
     if (!orgId || !/^[0-9a-f-]{36}$/i.test(orgId)) throw new NotFoundException('Organization not found');
-    const membership = await this.prisma.membership.findUnique({
-      where: { userId_organizationId: { userId: req.user!.id, organizationId: orgId } },
-    });
+    const membership = await this.db.memberships.findOne({ userId: req.user!.id, organizationId: orgId });
     if (!membership) {
       this.logger.warn(`${maskEmail(req.user!.email)} tried to access org ${shortId(orgId)} without being a member`);
       throw new ForbiddenException('You are not a member of this organization');

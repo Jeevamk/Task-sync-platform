@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { TaskStatus } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+import { TaskStatus } from '../../database/types';
+import { DatabaseService } from '../../database/database.service';
 import { TrelloApi } from '../trello/trello.client';
 import { sameName } from './project-lists';
 
@@ -15,7 +15,7 @@ export type Board = { id: string; name: string; url: string };
 export class BoardSetupService {
   private readonly logger = new Logger(BoardSetupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly db: DatabaseService) {}
 
   /** Creates an empty board and adds the organization's team to it. */
   async createBoard(trello: TrelloApi, organizationId: string, name: string, workspaceId: string | undefined, notes: string[]): Promise<Board> {
@@ -81,10 +81,7 @@ export class BoardSetupService {
 
   /** Adds every active team member with a known Trello account, so they can move cards. */
   private async addTeam(trello: TrelloApi, organizationId: string, boardId: string, notes: string[]): Promise<void> {
-    const members = await this.prisma.teamMember.findMany({
-      where: { organizationId, active: true },
-      select: { name: true, trelloMemberId: true },
-    });
+    const members = await this.db.teamMembers.find({ organizationId, active: true }, { name: 1, trelloMemberId: 1 });
 
     const added: string[] = [];
     for (const member of members) {

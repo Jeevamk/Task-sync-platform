@@ -1,13 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService, Session } from '../../database/database.service';
+import { insertOne } from '../../database/helpers';
 import { runInBackground } from '../../common/background';
 import { DeliveryProgress, DeliveryService } from '../delivery/delivery.service';
 import { TaskEventPayload } from '../delivery/messages';
-
-type Tx = Prisma.TransactionClient;
 
 const MAX_ATTEMPTS = 8;
 const CLAIM_LEASE_MS = 60_000;
@@ -31,7 +29,7 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
   private flushAgain = false;
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly config: ConfigService,
     private readonly delivery: DeliveryService,
   ) {}
@@ -58,12 +56,10 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Save an event inside the caller's transaction. */
-  async enqueue(tx: Tx, type: string, payload: Record<string, unknown>): Promise<string> {
+  /** Save an event inside the caller's transaction (pass its session). */
+  async enqueue(session: Session, type: string, payload: Record<string, unknown>): Promise<string> {
     const id = randomUUID();
-    await tx.outboxEvent.create({
-      data: { id, type, payload: { eventId: id, type, ...payload } as Prisma.InputJsonValue },
-    });
+    await insertOne(this.db.outboxEvents, { _id: id, type, payload: { eventId: id, type, ...payload } }, session);
     this.logger.debug(`Queued ${type} event ${id}`);
     return id;
   }
@@ -82,19 +78,20 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
     }
     this.flushing = true;
     try {
-      const due = await this.prisma.outboxEvent.findMany({
-        where: { status: 'PENDING', nextAttemptAt: { lte: new Date() } },
-        orderBy: { createdAt: 'asc' },
-        take: limit,
-      });
+      const due = await this.db.outboxEvents.find(
+        { status: 'PENDING', nextAttemptAt: { $lte: new Date() } },
+        null,
+        { sort: { createdAt: 1 }, limit },
+      );
       if (due.length) this.logger.debug(`Outbox: ${due.length} event(s) due`);
 
       for (const event of due) {
-        const claimed = await this.prisma.outboxEvent.updateMany({
-          where: { id: event.id, status: 'PENDING', attempts: event.attempts },
-          data: { attempts: { increment: 1 }, nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS) },
-        });
-        if (claimed.count === 0) {
+        // Claim it only if nobody else did since we read it (same attempts value), and lease it for a minute.
+        const claimed = await this.db.outboxEvents.updateOne(
+          { _id: event.id, status: 'PENDING', attempts: event.attempts },
+          { $inc: { attempts: 1 }, $set: { nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS) } },
+        );
+        if (claimed.modifiedCount === 0) {
           this.logger.debug(`Event ${event.id} already taken by another worker`);
           continue;
         }
@@ -106,39 +103,35 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
             event.payload as unknown as TaskEventPayload,
             (event.progress ?? {}) as DeliveryProgress,
             async (progress) => {
-              await this.prisma.outboxEvent.update({ where: { id: event.id }, data: { progress } });
+              await this.db.outboxEvents.updateOne({ _id: event.id }, { $set: { progress } });
             },
           );
-          await this.prisma.outboxEvent.update({
-            where: { id: event.id },
-            data: { status: 'SENT', sentAt: new Date(), lastError: null },
-          });
+          await this.db.outboxEvents.updateOne({ _id: event.id }, { $set: { status: 'SENT', sentAt: new Date(), lastError: null } });
           this.logger.debug(`Event ${event.id} (${event.type}) delivered on attempt ${attempt} in ${Date.now() - started}ms`);
           result.sent++;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const payload = event.payload as { project?: { id?: string }; task?: { id?: string } };
           if (attempt >= MAX_ATTEMPTS) {
-            await this.prisma.$transaction([
-              this.prisma.outboxEvent.update({ where: { id: event.id }, data: { status: 'FAILED', lastError: message } }),
-              this.prisma.syncError.create({
-                data: {
+            await this.db.transaction(async (session) => {
+              await this.db.outboxEvents.updateOne({ _id: event.id }, { $set: { status: 'FAILED', lastError: message } }, { session });
+              await insertOne(
+                this.db.syncErrors,
+                {
                   step: 'deliver',
                   error: message,
-                  payload: event.payload as Prisma.InputJsonValue,
+                  payload: event.payload,
                   projectId: payload.project?.id ?? null,
                   taskId: payload.task?.id ?? null,
                 },
-              }),
-            ]);
+                session,
+              );
+            });
             this.logger.error(`Event ${event.id} (${event.type}) failed permanently: ${message}`);
             result.failed++;
           } else {
             const delay = Math.min(5_000 * 2 ** (attempt - 1), 30 * 60_000);
-            await this.prisma.outboxEvent.update({
-              where: { id: event.id },
-              data: { lastError: message, nextAttemptAt: new Date(Date.now() + delay) },
-            });
+            await this.db.outboxEvents.updateOne({ _id: event.id }, { $set: { lastError: message, nextAttemptAt: new Date(Date.now() + delay) } });
             this.logger.warn(`Event ${event.id} attempt ${attempt} failed, retry in ${delay / 1000}s: ${message}`);
             result.retried++;
           }

@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Logger, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
-import { Provider } from '@prisma/client';
+import { Provider } from '../../database/types';
 import { AuthUser, CurrentUser } from '../../common/auth/auth-user';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { OrgAccessGuard } from '../../common/auth/org-access.guard';

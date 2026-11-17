@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { CardSnapshot, ChangeResult, TaskChange, TasksService } from '../tasks/tasks.service';
@@ -21,7 +21,7 @@ export class TrelloWebhookService {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly tasks: TasksService,
     private readonly trello: TrelloClient,
     private readonly connections: ConnectionsService,
@@ -54,7 +54,7 @@ export class TrelloWebhookService {
       return { outcome: 'ignored', reason: 'not a card action' };
     }
 
-    const project = await this.prisma.project.findUnique({ where: { trelloBoardId: boardId } });
+    const project = await this.db.projects.findOne({ trelloBoardId: boardId });
     if (!project || !project.active) {
       // A webhook still exists for a board with no active project (e.g. project deleted): harmless.
       this.logger.warn(`Ignored Trello ${action.type} on board ${boardId}: no active project for this board`);
@@ -70,7 +70,7 @@ export class TrelloWebhookService {
 
     // New card for us? Fetch its details with the organization's own Trello token.
     let card: CardSnapshot | undefined;
-    const known = await this.prisma.task.findUnique({ where: { trelloCardId: cardId }, select: { id: true } });
+    const known = await this.db.tasks.findOne({ trelloCardId: cardId }, { _id: 1 });
     if (!known) {
       this.logger.debug(`[${project.name}] Card ${cardId} is new to us: fetching its details`);
       const api = await this.trello.forOrg(project.organizationId);

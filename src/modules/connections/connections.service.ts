@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Provider } from '@prisma/client';
-import { randomBytes } from 'crypto';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Provider } from '../../database/types';
+import { randomBytes, randomUUID } from 'crypto';
+import { DatabaseService } from '../../database/database.service';
+import { insertOne } from '../../database/helpers';
 import { TokenCrypto } from '../../common/crypto/token-crypto.service';
 import { maskEmail, shortId } from '../../common/logging/redact';
 import { SIGNUP } from './signup-links';
@@ -21,12 +22,12 @@ export class ConnectionsService {
   private readonly logger = new Logger(ConnectionsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly crypto: TokenCrypto,
   ) {}
 
   async getToken(organizationId: string, provider: Provider): Promise<string> {
-    const c = await this.prisma.connection.findUnique({ where: { organizationId_provider: { organizationId, provider } } });
+    const c = await this.db.connections.findOne({ organizationId, provider });
     if (!c) {
       this.logger.warn(`Org ${shortId(organizationId)}: ${provider} is not connected`);
       throw new BadRequestException(NOT_CONNECTED[provider]);
@@ -41,11 +42,11 @@ export class ConnectionsService {
   }
 
   get(organizationId: string, provider: Provider) {
-    return this.prisma.connection.findUnique({ where: { organizationId_provider: { organizationId, provider } } });
+    return this.db.connections.findOne({ organizationId, provider });
   }
 
   async status(organizationId: string) {
-    const rows = await this.prisma.connection.findMany({ where: { organizationId } });
+    const rows = await this.db.connections.find({ organizationId });
     const view = (p: Provider) => {
       const c = rows.find((r) => r.provider === p);
       return c
@@ -58,8 +59,8 @@ export class ConnectionsService {
   /** Step-by-step checklist for a new organization: what is done and what to call next. */
   async setup(organizationId: string) {
     const [rows, projects] = await Promise.all([
-      this.prisma.connection.findMany({ where: { organizationId }, select: { provider: true, externalName: true } }),
-      this.prisma.project.count({ where: { organizationId } }),
+      this.db.connections.find({ organizationId }, { provider: 1, externalName: 1 }),
+      this.db.projects.countDocuments({ organizationId }),
     ]);
     const has = (p: Provider) => rows.find((r) => r.provider === p);
     const base = `/orgs/${organizationId}`;
@@ -99,28 +100,27 @@ export class ConnectionsService {
       botUserId: data.botUserId ?? null,
       connectedBy: data.connectedBy ?? null,
     };
-    const saved = await this.prisma.connection.upsert({
-      where: { organizationId_provider: { organizationId, provider } },
-      create: { organizationId, provider, ...fields },
-      update: fields,
-    });
+    const saved = (await this.db.connections.findOneAndUpdate(
+      { organizationId, provider },
+      { $set: fields, $setOnInsert: { _id: randomUUID() } },
+      { upsert: true, new: true },
+    ))!;
     this.logger.log(`Org ${shortId(organizationId)}: ${provider} connected as "${data.externalName}" by ${maskEmail(data.connectedBy)}`);
     return saved;
   }
 
   async remove(organizationId: string, provider: Provider): Promise<void> {
-    const r = await this.prisma.connection.deleteMany({ where: { organizationId, provider } });
-    this.logger.log(`Org ${shortId(organizationId)}: ${provider} disconnected (${r.count} removed)`);
+    const r = await this.db.connections.deleteMany({ organizationId, provider });
+    this.logger.log(`Org ${shortId(organizationId)}: ${provider} disconnected (${r.deletedCount} removed)`);
   }
 
   /** A one-time value carried through the Trello/Slack/Google "Connect" redirect, so we know which organization started it. */
   async createState(organizationId: string, provider: Provider, userEmail: string): Promise<string> {
     const state = randomBytes(24).toString('base64url');
-    const expired = await this.prisma.oAuthState.deleteMany({ where: { expiresAt: { lt: new Date() } } });
-    if (expired.count) this.logger.debug(`Removed ${expired.count} expired connect links`);
-    await this.prisma.oAuthState.create({
-      data: { state, organizationId, provider, userEmail, expiresAt: new Date(Date.now() + STATE_TTL_MS) },
-    });
+    // MongoDB's TTL index also removes them, but only about once a minute.
+    const expired = await this.db.oauthStates.deleteMany({ expiresAt: { $lt: new Date() } });
+    if (expired.deletedCount) this.logger.debug(`Removed ${expired.deletedCount} expired connect links`);
+    await insertOne(this.db.oauthStates, { state, organizationId, provider, userEmail, expiresAt: new Date(Date.now() + STATE_TTL_MS) });
     this.logger.log(`Org ${shortId(organizationId)}: ${provider} connect started by ${maskEmail(userEmail)}`);
     return state;
   }
@@ -131,8 +131,8 @@ export class ConnectionsService {
       this.logger.warn(`${provider} connect callback without state`);
       throw new BadRequestException('Missing state');
     }
-    const row = await this.prisma.oAuthState.findUnique({ where: { state } });
-    if (row) await this.prisma.oAuthState.delete({ where: { state } });
+    // Read and delete in one step, so two callbacks with the same state can't both succeed.
+    const row = await this.db.oauthStates.findOneAndDelete({ state });
     if (!row || row.provider !== provider || row.expiresAt < new Date()) {
       const why = !row ? 'unknown or already used' : row.provider !== provider ? `meant for ${row.provider}` : 'expired';
       this.logger.warn(`${provider} connect link rejected: ${why}`);

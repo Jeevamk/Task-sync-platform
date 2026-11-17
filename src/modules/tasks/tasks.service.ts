@@ -1,18 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import {
-  EventSource,
-  Prisma,
-  Project,
-  Task,
-  TaskEventType,
-  TaskStatus,
-  TeamMember,
-} from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService, Session } from '../../database/database.service';
+import { insertOne, isDuplicateKey } from '../../database/helpers';
+import type { EventSource, Project, Task, TaskEventType, TaskStatus, TeamMember } from '../../database/types';
 import { OutboxService } from '../outbox/outbox.service';
 import { STATUS_LABEL, isBackward, isMoveAllowed } from './task-status';
 
-type Tx = Prisma.TransactionClient;
 type TaskWithAssignee = Task & { assignee: TeamMember | null };
 
 /** Card details known at the time of the change (used when the task does not exist yet). */
@@ -65,7 +57,7 @@ export class TasksService {
   private readonly logger = new Logger(TasksService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly outbox: OutboxService,
   ) {}
 
@@ -73,20 +65,17 @@ export class TasksService {
   async applyChange(input: ChangeInput): Promise<ChangeResult> {
     const started = Date.now();
     try {
-      const result = await this.prisma.$transaction(async (tx) => this.applyInTx(tx, input), { timeout: 15_000 });
+      const result = await this.db.transaction((session) => this.applyInTx(session, input));
       this.logger.debug(
         `${input.source} ${input.change.kind} on card ${input.trelloCardId}: ${result.outcome}` +
           `${result.eventType ? ` -> ${result.eventType}` : ''}${result.reason ? ` (${result.reason})` : ''} in ${Date.now() - started}ms`,
       );
       return result;
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        const target = String((err.meta as { target?: unknown })?.target ?? '');
-        if (target.includes('external_id') || target.includes('processed_events') || target.includes('source')) {
-          // Trello retried, or two deliveries raced: already handled once, safe to skip.
-          this.logger.debug(`Duplicate ${input.source} event ${input.externalId} skipped`);
-          return { outcome: 'duplicate', reason: `event ${input.externalId} already processed` };
-        }
+      if (isDuplicateKey(err, 'externalId')) {
+        // Trello retried, or two deliveries raced: already handled once, safe to skip.
+        this.logger.debug(`Duplicate ${input.source} event ${input.externalId} skipped`);
+        return { outcome: 'duplicate', reason: `event ${input.externalId} already processed` };
       }
       this.logger.error(
         `Could not apply ${input.source} ${input.change.kind} on card ${input.trelloCardId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -96,29 +85,29 @@ export class TasksService {
     }
   }
 
-  private async applyInTx(tx: Tx, input: ChangeInput): Promise<ChangeResult> {
-    // 1. Duplicate check: a second delivery of the same event fails on the unique key.
-    await tx.processedEvent.create({ data: { source: input.source, externalId: input.externalId } });
+  private async applyInTx(session: Session, input: ChangeInput): Promise<ChangeResult> {
+    // 1. Duplicate check: a second delivery of the same event fails on the unique index (error 11000).
+    await insertOne(this.db.processedEvents, { source: input.source, externalId: input.externalId }, session);
 
-    const project = await tx.project.findUniqueOrThrow({ where: { id: input.projectId } });
+    const project = await this.db.projects.findOne({ _id: input.projectId }, null, { session });
+    if (!project) throw new Error(`Project ${input.projectId} not found`);
     const listMap = (project.listMap ?? {}) as Record<string, TaskStatus>;
     const actor = input.actorTrelloId
-      ? await this.findMember(tx, project.organizationId, input.actorTrelloId)
+      ? await this.findMember(session, project.organizationId, input.actorTrelloId)
       : null;
 
     // 2. Find the task, or create it if this card is new to us.
-    let task = await tx.task.findUnique({
-      where: { trelloCardId: input.trelloCardId },
-      include: { assignee: true },
-    });
+    const found = await this.db.tasks.findOne({ trelloCardId: input.trelloCardId }, null, { session });
+    let task = found ? await this.withAssignee(session, found) : null;
 
     if (!task) {
       if (!input.card) {
         return { outcome: 'ignored', reason: 'unknown card and no card details' };
       }
-      task = await this.createTask(tx, project, listMap, input);
-      await tx.taskEvent.create({
-        data: {
+      task = await this.createTask(session, project, listMap, input);
+      await insertOne(
+        this.db.taskEvents,
+        {
           taskId: task.id,
           type: 'CREATED',
           field: 'status',
@@ -127,8 +116,9 @@ export class TasksService {
           source: input.source,
           createdAt: input.occurredAt,
         },
-      });
-      await this.enqueueEvent(tx, 'task.created', project, task, {
+        session,
+      );
+      await this.enqueueEvent(session, 'task.created', project, task, {
         field: 'status',
         from: null,
         to: task.status,
@@ -144,7 +134,9 @@ export class TasksService {
 
     // 3. Work out what changes.
     const now = input.occurredAt;
-    const data: Prisma.TaskUncheckedUpdateInput = {};
+    const data: Partial<Task> = {};
+    /** Counters raised with $inc. The version goes up on every change. */
+    const inc: { version: number; reopenCount?: number } = { version: 1 };
     let eventType: TaskEventType;
     let outboxType: string;
     let field: string;
@@ -163,6 +155,7 @@ export class TasksService {
         const from = task.status;
         violation = !isMoveAllowed(from, to, actor ? { role: actor.role, isAssignee: actor.id === task.assigneeId } : null);
         Object.assign(data, this.timestampsFor(task, from, to, now));
+        if (isBackward(from, to)) inc.reopenCount = 1;
         data.status = to;
 
         // Moving to In Progress with nobody assigned: the person who moved it takes it (F2).
@@ -180,7 +173,7 @@ export class TasksService {
       }
 
       case 'assigned': {
-        const member = await this.findMember(tx, project.organizationId, input.change.memberTrelloId);
+        const member = await this.findMember(session, project.organizationId, input.change.memberTrelloId);
         if (!member) {
           this.logger.warn(`Trello member ${input.change.memberTrelloId} is not in team_members; assignment kept in Trello only`);
         }
@@ -205,7 +198,7 @@ export class TasksService {
       }
 
       case 'unassigned': {
-        const member = await this.findMember(tx, project.organizationId, input.change.memberTrelloId);
+        const member = await this.findMember(session, project.organizationId, input.change.memberTrelloId);
         if (!member || member.id !== task.assigneeId) return { outcome: 'no-change', taskId: task.id };
         data.assigneeId = null;
         eventType = 'UNASSIGNED';
@@ -272,15 +265,12 @@ export class TasksService {
     }
 
     // 4. Save the task (version goes up on every change), the history row and the outbox event.
-    data.version = { increment: 1 };
-    const updated = await tx.task.update({
-      where: { id: task.id },
-      data,
-      include: { assignee: true },
-    });
+    const saved = await this.db.tasks.findOneAndUpdate({ _id: task.id }, { $set: data, $inc: inc }, { new: true, session });
+    const updated = await this.withAssignee(session, saved!);
 
-    await tx.taskEvent.create({
-      data: {
+    await insertOne(
+      this.db.taskEvents,
+      {
         taskId: task.id,
         type: eventType,
         field,
@@ -292,9 +282,10 @@ export class TasksService {
         violation,
         createdAt: input.occurredAt,
       },
-    });
+      session,
+    );
 
-    await this.enqueueEvent(tx, outboxType, project, updated, {
+    await this.enqueueEvent(session, outboxType, project, updated, {
       field,
       from: oldValue,
       to: newValue,
@@ -311,7 +302,7 @@ export class TasksService {
   }
 
   private async createTask(
-    tx: Tx,
+    session: Session,
     project: Project,
     listMap: Record<string, TaskStatus>,
     input: ChangeInput,
@@ -320,15 +311,16 @@ export class TasksService {
     const status = listMap[card.idList] ?? 'TODO';
     let assigneeId: string | null = null;
     for (const trelloId of card.idMembers ?? []) {
-      const m = await this.findMember(tx, project.organizationId, trelloId);
+      const m = await this.findMember(session, project.organizationId, trelloId);
       if (m) {
         assigneeId = m.id;
         break;
       }
     }
     const now = input.occurredAt;
-    return tx.task.create({
-      data: {
+    const created = await insertOne(
+      this.db.tasks,
+      {
         projectId: project.id,
         taskKey: `TASK-${card.idShort}`,
         trelloCardId: input.trelloCardId,
@@ -343,33 +335,35 @@ export class TasksService {
         readyForTestingAt: ['READY_FOR_TESTING', 'COMPLETED'].includes(status) ? now : null,
         completedAt: status === 'COMPLETED' ? now : null,
       },
-      include: { assignee: true },
-    });
+      session,
+    );
+    return this.withAssignee(session, created);
   }
 
-  private findMember(tx: Tx, organizationId: string, trelloMemberId: string) {
-    return tx.teamMember.findUnique({
-      where: { organizationId_trelloMemberId: { organizationId, trelloMemberId } },
-    });
+  private findMember(session: Session, organizationId: string, trelloMemberId: string) {
+    return this.db.teamMembers.findOne({ organizationId, trelloMemberId }, null, { session });
   }
 
-  /** Timestamp columns that change when a task moves between statuses. */
-  private timestampsFor(task: Task, from: TaskStatus, to: TaskStatus, now: Date): Prisma.TaskUncheckedUpdateInput {
-    const data: Prisma.TaskUncheckedUpdateInput = {};
+  /** The task plus its assignee (the team member), as the outbox event needs it. */
+  private async withAssignee(session: Session, task: Task): Promise<TaskWithAssignee> {
+    const assignee = task.assigneeId ? await this.db.teamMembers.findOne({ _id: task.assigneeId }, null, { session }) : null;
+    return { ...task, assignee };
+  }
+
+  /** Timestamp fields that change when a task moves between statuses (the reopen count is raised by the caller). */
+  private timestampsFor(task: Task, from: TaskStatus, to: TaskStatus, now: Date): Partial<Task> {
+    const data: Partial<Task> = {};
     if (to === 'ASSIGNED' && !task.pickedUpAt) data.pickedUpAt = now;
     if (to === 'IN_PROGRESS' && !task.startedAt) data.startedAt = now;
     if (to === 'READY_FOR_TESTING') data.readyForTestingAt = now;
     if (to === 'COMPLETED') data.completedAt = now;
-    if (isBackward(from, to)) {
-      data.reopenCount = { increment: 1 };
-      if (from === 'COMPLETED') data.completedAt = null;
-    }
+    if (isBackward(from, to) && from === 'COMPLETED') data.completedAt = null;
     return data;
   }
 
   /** Build the event n8n receives (see "Events and n8n workflows" in the Technical Documentation). */
   private async enqueueEvent(
-    tx: Tx,
+    session: Session,
     type: string,
     project: Project,
     task: TaskWithAssignee,
@@ -386,7 +380,7 @@ export class TasksService {
     const label = (v: string | null) => (v && v in STATUS_LABEL ? STATUS_LABEL[v as TaskStatus] : v);
     const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-    await this.outbox.enqueue(tx, type, {
+    await this.outbox.enqueue(session, type, {
       occurredAt: new Date().toISOString(),
       project: {
         id: project.id,

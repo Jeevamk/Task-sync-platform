@@ -1,9 +1,10 @@
-import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { maskEmail, shortId } from '../../common/logging/redact';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 
 export interface LoginResult {
   token: string;
@@ -16,7 +17,7 @@ export class AuthService {
   private readonly google = new OAuth2Client();
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
@@ -41,11 +42,7 @@ export class AuthService {
       throw new UnauthorizedException('Google account email is not verified');
     }
 
-    const user = await this.prisma.user.upsert({
-      where: { email: payload.email.toLowerCase() },
-      create: { email: payload.email.toLowerCase(), name: payload.name ?? payload.email, googleSub: payload.sub },
-      update: { name: payload.name ?? undefined, googleSub: payload.sub },
-    });
+    const user = await this.upsertUser(payload.email.toLowerCase(), payload.name, { googleSub: payload.sub });
     this.logger.log(`Google sign-in: ${maskEmail(user.email)} (user ${shortId(user.id)})`);
     return this.issue(user);
   }
@@ -59,26 +56,38 @@ export class AuthService {
     }
     const clean = String(email ?? '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+$/.test(clean)) throw new UnauthorizedException('A valid email is required');
-    const user = await this.prisma.user.upsert({
-      where: { email: clean },
-      create: { email: clean, name: name?.trim() || clean },
-      update: name?.trim() ? { name: name.trim() } : {},
-    });
+    const user = await this.upsertUser(clean, name?.trim());
     this.logger.log(`Dev login: ${maskEmail(user.email)} (user ${shortId(user.id)})`);
     return this.issue(user);
   }
 
   async me(userId: string) {
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      include: { memberships: { include: { organization: true } } },
-    });
+    const user = await this.db.users.findOne({ _id: userId });
+    if (!user) throw new NotFoundException('User not found');
+    const memberships = await this.db.memberships.find({ userId });
+    const orgs = await this.db.organizations.find({ _id: { $in: memberships.map((m) => m.organizationId) } });
     return {
       id: user.id,
       email: user.email,
       name: user.name,
-      organizations: user.memberships.map((m) => ({ id: m.organization.id, name: m.organization.name, role: m.role })),
+      organizations: memberships.flatMap((m) => {
+        const org = orgs.find((o) => o.id === m.organizationId);
+        return org ? [{ id: org.id, name: org.name, role: m.role }] : [];
+      }),
     };
+  }
+
+  /** Finds the user by email or creates them. A given name (and Google sub) is saved; without a name, a new user is named after the email. */
+  private async upsertUser(email: string, name: string | undefined, extra: { googleSub?: string } = {}) {
+    const user = await this.db.users.findOneAndUpdate(
+      { email },
+      {
+        $set: { ...extra, ...(name ? { name } : {}) },
+        $setOnInsert: { _id: randomUUID(), ...(name ? {} : { name: email }) },
+      },
+      { upsert: true, new: true },
+    );
+    return user!;
   }
 
   private async issue(user: { id: string; email: string; name: string }): Promise<LoginResult> {

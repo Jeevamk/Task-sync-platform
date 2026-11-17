@@ -1,42 +1,95 @@
 /** App-level check: boots the whole API with a fake database and calls the real routes.  Run: npm run build && npm run test:app */
 Object.assign(process.env, {
   NODE_ENV: 'development', PUBLIC_BASE_URL: 'https://example.ngrok-free.dev',
-  DATABASE_URL: 'postgresql://a:b@localhost:5432/x', DIRECT_URL: 'postgresql://a:b@localhost:5432/x',
+  MONGODB_URI: 'mongodb://localhost:27017/x',
   TOKEN_ENCRYPTION_KEY: 'cd'.repeat(32), JWT_SECRET: 'x'.repeat(40), ALLOW_DEV_LOGIN: 'true',
   TRELLO_API_KEY: 'trellokey123', TRELLO_APP_SECRET: 'trellosecret',
   SLACK_CLIENT_ID: '111.222', SLACK_CLIENT_SECRET: 'slacksecret',
   GOOGLE_SERVICE_ACCOUNT_EMAIL: 'tasksync@proj.iam.gserviceaccount.com', GOOGLE_PRIVATE_KEY: 'dummy',
   INTERNAL_API_KEY: 'k'.repeat(20), OUTBOX_POLL_MS: '0',
+  // Empty on purpose: values set here win over your .env, so a local n8n setting can't make the test call it.
+  N8N_BASE_URL: '', N8N_EVENT_WEBHOOK_URL: '', N8N_EVENT_SIGNING_SECRET: '',
 });
 const root = require('path').resolve(__dirname, '..') + '/';
+const { randomUUID } = require('crypto');
 const { Test } = require(root + 'node_modules/@nestjs/testing');
 const { DocumentBuilder, SwaggerModule } = require(root + 'node_modules/@nestjs/swagger');
 const { AppModule } = require(root + 'dist/app.module');
-const { PrismaService } = require(root + 'dist/prisma/prisma.service');
+const { DatabaseService } = require(root + 'dist/database/database.service');
 const assert = require('assert');
 
-const users = {}; const memberships = []; const orgs = {}; const states = {};
-const prisma = {
-  $queryRaw: async () => 1,
-  outboxEvent: { groupBy: async () => [], findMany: async () => [] },
-  user: {
-    upsert: async ({ where, create }) => (users[where.email] ??= { id: '11111111-1111-4111-8111-111111111111', ...create }),
-    findUniqueOrThrow: async ({ where }) => ({ ...Object.values(users).find((u) => u.id === where.id), memberships: memberships.map((m) => ({ ...m, organization: orgs[m.organizationId] })) }),
-  },
-  organization: {
-    findUniqueOrThrow: async ({ where }) => ({ ...orgs[where.id], _count: { projects: 0, teamMembers: 0 } }),
-    create: async ({ data }) => { const id = '22222222-2222-4222-8222-222222222222'; orgs[id] = { id, name: data.name }; memberships.push({ userId: data.memberships.create.userId, organizationId: id, role: 'OWNER' }); return orgs[id]; },
-  },
-  membership: {
-    findUnique: async ({ where }) => memberships.find((m) => m.userId === where.userId_organizationId.userId && m.organizationId === where.userId_organizationId.organizationId) ?? null,
-    findMany: async () => memberships.map((m) => ({ ...m, organization: orgs[m.organizationId] })),
-  },
-  oAuthState: { findUnique: async ({ where }) => states[where.state] ?? null, delete: async () => ({}), deleteMany: async () => ({}), create: async ({ data }) => (states[data.state] = data) },
-  connection: { findMany: async () => [], findUnique: async () => null },
+/**
+ * In-memory stand-in for one Mongoose model. Supports the calls the tested routes make
+ * (plain equality, $in, $lt/$gt filters; $set/$setOnInsert updates; upsert). Like the real models
+ * (see plain-documents.ts), reads return plain copies with `id` instead of `_id`.
+ */
+function fakeModel() {
+  const rows = [];
+  const plain = (r) => { if (!r) return null; const { _id, ...rest } = r; return { id: _id, ...rest }; };
+  const test = (v, cond) => {
+    if (cond && typeof cond === 'object' && !(cond instanceof Date) && !Array.isArray(cond)) {
+      return Object.entries(cond).every(([op, x]) =>
+        op === '$in' ? x.includes(v) : op === '$nin' ? !x.includes(v) : op === '$ne' ? v !== x
+        : op === '$lt' ? v < x : op === '$lte' ? v <= x : op === '$gt' ? v > x : op === '$gte' ? v >= x
+        : (() => { throw new Error(`fake db: unsupported operator ${op}`); })());
+    }
+    return v === cond;
+  };
+  const matches = (filter = {}) => (r) => Object.entries(filter).every(([k, cond]) => test(r[k], cond));
+  // Thenable like a Mongoose query; chain calls are accepted and ignored.
+  const query = (fn) => {
+    const q = { then: (ok, fail) => Promise.resolve().then(fn).then(ok, fail), exec: () => Promise.resolve().then(fn) };
+    for (const m of ['sort', 'limit', 'skip', 'select', 'lean', 'session']) q[m] = () => q;
+    return q;
+  };
+  const apply = (row, update, inserting) => {
+    Object.assign(row, update.$set ?? {}, inserting ? update.$setOnInsert ?? {} : {});
+    for (const [k, n] of Object.entries(update.$inc ?? {})) row[k] = (row[k] ?? 0) + n;
+  };
+  const insert = (data) => { const row = { _id: randomUUID(), createdAt: new Date(), ...data }; rows.push(row); return row; };
+  return {
+    rows,
+    find: (filter) => query(() => rows.filter(matches(filter)).map(plain)),
+    findOne: (filter) => query(() => plain(rows.find(matches(filter)))),
+    countDocuments: (filter) => query(() => rows.filter(matches(filter)).length),
+    create: async (docs) => (Array.isArray(docs) ? docs : [docs]).map((d) => plain(insert(d))),
+    findOneAndUpdate: (filter, update, opts = {}) => query(() => {
+      let row = rows.find(matches(filter));
+      const before = plain(row);
+      if (!row && !opts.upsert) return null;
+      if (!row) { row = insert({}); Object.assign(row, Object.fromEntries(Object.entries(filter).filter(([, v]) => typeof v !== 'object'))); apply(row, update, true); }
+      else apply(row, update, false);
+      return opts.new || opts.returnDocument === 'after' ? plain(row) : before;
+    }),
+    updateOne: (filter, update) => query(() => {
+      const row = rows.find(matches(filter));
+      if (row) apply(row, update, false);
+      return { matchedCount: row ? 1 : 0, modifiedCount: row ? 1 : 0 };
+    }),
+    findOneAndDelete: (filter) => query(() => {
+      const i = rows.findIndex(matches(filter));
+      return i < 0 ? null : plain(rows.splice(i, 1)[0]);
+    }),
+    deleteMany: (filter) => query(() => {
+      const keep = rows.filter((r) => !matches(filter)(r));
+      const deletedCount = rows.length - keep.length;
+      rows.splice(0, rows.length, ...keep);
+      return { deletedCount };
+    }),
+  };
+}
+
+const db = {
+  organizations: fakeModel(), users: fakeModel(), memberships: fakeModel(), connections: fakeModel(),
+  oauthStates: fakeModel(), projects: fakeModel(), teamMembers: fakeModel(), tasks: fakeModel(),
+  taskEvents: fakeModel(), processedEvents: fakeModel(), outboxEvents: fakeModel(), syncErrors: fakeModel(),
+  transaction: async (work) => work(undefined),
+  ping: async () => {},
+  outboxCounts: async () => ({}),
 };
 
 (async () => {
-  const mod = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(PrismaService).useValue(prisma).compile();
+  const mod = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(DatabaseService).useValue(db).compile();
   const app = mod.createNestApplication({ rawBody: true, logger: false });
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, new DocumentBuilder().addBearerAuth().build()));
   await app.listen(0);

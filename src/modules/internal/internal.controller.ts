@@ -1,7 +1,7 @@
 import { Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { InternalApiKeyGuard } from '../../common/guards/internal-api-key.guard';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 import { FlushResult, OutboxService } from '../outbox/outbox.service';
 
 /** For Vercel Cron and admins only (X-Api-Key or Bearer CRON_SECRET). */
@@ -12,7 +12,7 @@ export class InternalController {
   private readonly logger = new Logger(InternalController.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly outbox: OutboxService,
   ) {}
 
@@ -30,8 +30,7 @@ export class InternalController {
   }
 
   @Get('outbox/status')
-  async status(): Promise<Record<string, number>> {
-    const groups = await this.prisma.outboxEvent.groupBy({ by: ['status'], _count: { _all: true } });
-    return Object.fromEntries(groups.map((g: { status: string; _count: { _all: number } }) => [g.status, g._count._all]));
+  status(): Promise<Record<string, number>> {
+    return this.db.outboxCounts();
   }
 }

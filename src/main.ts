@@ -53,5 +53,8 @@ async function bootstrap(): Promise<void> {
 bootstrap().catch((err: unknown) => {
   // e.g. a missing .env value or the database is down: say why, then stop.
   processLogger.fatal(`Startup failed: ${err instanceof Error ? err.message : String(err)}`, err instanceof Error ? err.stack : undefined);
+  // bufferLogs holds every message until app.useLogger() runs. When startup fails before that, nothing
+  // would ever be printed (the app just dies silently), so write the buffered messages out first.
+  Logger.flush();
   process.exit(1);
 });

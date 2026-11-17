@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { TaskStatus } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+import { TaskStatus } from '../../database/types';
+import { DatabaseService } from '../../database/database.service';
 import { norm, toTrelloDue } from '../trello/card-fields';
 import { TrelloClient } from '../trello/trello.client';
 import { CreateCardDto, CreatedCardDto } from './dto/create-card.dto';
@@ -15,12 +15,12 @@ export class ProjectCardsService {
   private readonly logger = new Logger(ProjectCardsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly trello: TrelloClient,
   ) {}
 
   async create(organizationId: string, projectId: string, input: CreateCardDto): Promise<CreatedCardDto> {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, organizationId } });
+    const project = await this.db.projects.findOne({ _id: projectId, organizationId });
     if (!project) throw new NotFoundException('Project not found');
     if (!project.active) throw new BadRequestException('This project is not active, so its board is not synced');
 

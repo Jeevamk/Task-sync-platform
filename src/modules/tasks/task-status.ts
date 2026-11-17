@@ -1,4 +1,4 @@
-import { Role, TaskStatus } from '@prisma/client';
+import type { Role, TaskStatus } from '../../database/types';
 
 /** How each status is shown in the sheet and in Slack. */
 export const STATUS_LABEL: Record<TaskStatus, string> = {

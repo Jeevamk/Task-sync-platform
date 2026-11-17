@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { errMsg, maskEmail, shortId } from '../../common/logging/redact';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 import { SlackClient } from '../slack/slack.client';
 import { TrelloClient } from '../trello/trello.client';
 import { TEAM_ROLES, TeamMemberDto } from './dto/team-member.dto';
@@ -11,13 +12,13 @@ export class TeamService {
   private readonly logger = new Logger(TeamService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly trello: TrelloClient,
     private readonly slack: SlackClient,
   ) {}
 
   list(orgId: string) {
-    return this.prisma.teamMember.findMany({ where: { organizationId: orgId }, orderBy: { name: 'asc' } });
+    return this.db.teamMembers.find({ organizationId: orgId }, null, { sort: { name: 1 } });
   }
 
   /** Adds a member, or updates the one with the same email. `notes` tell the caller what was matched. */
@@ -39,11 +40,11 @@ export class TeamService {
       ...(trelloMemberId ? { trelloMemberId } : {}),
       ...(slackUserId ? { slackUserId } : {}),
     };
-    const member = await this.prisma.teamMember.upsert({
-      where: { organizationId_email: { organizationId: orgId, email } },
-      create: { organizationId: orgId, email, ...data },
-      update: data,
-    });
+    const member = (await this.db.teamMembers.findOneAndUpdate(
+      { organizationId: orgId, email },
+      { $set: data, $setOnInsert: { _id: randomUUID() } },
+      { upsert: true, new: true },
+    ))!;
 
     this.logger.log(
       `Org ${shortId(orgId)}: team member ${name} <${maskEmail(email)}> saved as ${body.role} ` +
@@ -54,8 +55,8 @@ export class TeamService {
 
   /** Soft delete: the member stays in history but is no longer active. */
   async deactivate(orgId: string, memberId: string) {
-    const result = await this.prisma.teamMember.updateMany({ where: { id: memberId, organizationId: orgId }, data: { active: false } });
-    this.logger.log(`Org ${shortId(orgId)}: team member ${shortId(memberId)} deactivated (${result.count} updated)`);
+    const result = await this.db.teamMembers.updateOne({ _id: memberId, organizationId: orgId }, { $set: { active: false } });
+    this.logger.log(`Org ${shortId(orgId)}: team member ${shortId(memberId)} deactivated (${result.matchedCount} updated)`);
     return { ok: true };
   }
 

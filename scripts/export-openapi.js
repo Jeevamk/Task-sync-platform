@@ -13,8 +13,7 @@ const path = require('path');
 // Config validation needs these to exist. Real values from .env win; placeholders are only used when missing (e.g. CI).
 const placeholders = {
   PUBLIC_BASE_URL: 'https://example.com',
-  DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
-  DIRECT_URL: 'postgresql://user:pass@localhost:5432/db',
+  MONGODB_URI: 'mongodb://localhost:27017/taskvane',
   TOKEN_ENCRYPTION_KEY: '0'.repeat(64),
   JWT_SECRET: 'x'.repeat(40),
   TRELLO_API_KEY: 'placeholder',

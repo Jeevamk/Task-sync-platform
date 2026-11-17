@@ -1,5 +1,5 @@
 /**
- * Self-tests for the multi-tenant pieces (no network, no database). Run after `npm run build`:
+ * Self-tests for the multi-tenant pieces (no network, no database: MongoDB is replaced by small fakes). Run after `npm run build`:
  *   npm run test:unit
  */
 const assert = require('assert');
@@ -80,11 +80,17 @@ const path = require('path');
       },
     }),
   };
-  const prisma = { task: {
-    findUnique: async () => ({ slackThreadTs: threadTs }),
-    updateMany: async ({ data }) => { threadTs = data.slackThreadTs; },
+  // Stands in for DatabaseService: only the two Mongo calls the delivery makes on the tasks collection.
+  const db = { tasks: {
+    findOne: async () => ({ slackThreadTs: threadTs }),
+    updateOne: async (filter, { $set }) => {
+      // Same rule as the real filter { slackThreadTs: null }: never replace a thread that already exists.
+      if (filter.slackThreadTs === null && threadTs !== null) return { matchedCount: 0, modifiedCount: 0 };
+      threadTs = $set.slackThreadTs;
+      return { matchedCount: 1, modifiedCount: 1 };
+    },
   } };
-  const delivery = new DeliveryService(prisma, sheets, slack, { get: () => undefined, getOrThrow: () => '' });
+  const delivery = new DeliveryService(db, sheets, slack, { get: () => undefined, getOrThrow: () => '' });
   let progress = {};
   await assert.rejects(delivery.deliver({ ...event, type: 'task.created' }, progress, async (p) => { progress = p; }));
   assert.deepStrictEqual(progress, { sheet: true, history: true });

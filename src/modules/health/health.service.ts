@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../prisma/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 
 export type CheckResult = { status: 'up' | 'down' | 'not-configured'; error?: string };
 
@@ -16,7 +16,7 @@ export class HealthService {
   private readonly logger = new Logger(HealthService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly db: DatabaseService,
     private readonly config: ConfigService,
   ) {}
 
@@ -24,7 +24,7 @@ export class HealthService {
     const n8nBase = this.config.get<string>('N8N_BASE_URL');
     const [database, n8n] = await Promise.all([
       this.run(async () => {
-        await this.prisma.$queryRaw`SELECT 1`;
+        await this.db.ping();
       }),
       n8nBase
         ? this.run(async () => {
@@ -36,8 +36,7 @@ export class HealthService {
 
     let outbox: Record<string, number> | undefined;
     if (database.status === 'up') {
-      const groups = await this.prisma.outboxEvent.groupBy({ by: ['status'], _count: { _all: true } });
-      outbox = Object.fromEntries(groups.map((g: { status: string; _count: { _all: number } }) => [g.status, g._count._all]));
+      outbox = await this.db.outboxCounts();
     }
 
     if (database.status === 'down') this.logger.error(`Health: database is down: ${database.error}`);

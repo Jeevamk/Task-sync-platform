@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { TaskStatus } from '@prisma/client';
+import { TaskStatus } from '../../database/types';
 
 /** Statuses that have a Trello list. ARCHIVED has none: a card is archived, not moved. */
 export type WorkflowStatus = Exclude<TaskStatus, 'ARCHIVED'>;
