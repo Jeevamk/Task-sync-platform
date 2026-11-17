@@ -242,7 +242,7 @@ export class ProjectsService {
     const sheet = await this.sheets.describe(sheetId).catch((err: Error) => {
       throw new BadRequestException(err.message);
     });
-    if (!sheet.tabs.includes('Tasks')) throw new BadRequestException('The sheet needs a "Tasks" tab (copy the Taskvane template)');
+    if (!sheet.tabs.includes('Tasks')) throw new BadRequestException('The sheet needs a "Tasks" tab (download the sample: GET /sheet-template)');
 
     const headers = await this.sheets.getHeaders(sheetId, 'Tasks');
     if (!headers.includes('Task ID')) throw new BadRequestException('The Tasks tab needs a "Task ID" header in row 1');

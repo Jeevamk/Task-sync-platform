@@ -45,7 +45,9 @@ export class CreateProjectDto {
 
   @ApiProperty({
     example: 'new',
-    description: 'Sheet link or ID (shared with the Taskvane service account), or "new" to create one in your Drive (needs Connect Google)',
+    description:
+      'Sheet link or ID (shared with the Taskvane service account; sample with the headers: GET /sheet-template), ' +
+      'or "new" to create one in your Drive (needs Connect Google)',
   })
   @Transform(trim)
   @IsString()

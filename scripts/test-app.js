@@ -91,6 +91,19 @@ const prisma = {
   assert.strictEqual(r.status, 400);
   console.log('✔ Trello webhook still rejects bad signatures; connect callback page served; unknown state refused');
 
+  let res = await fetch(base + '/sheet-template');
+  assert.strictEqual(res.status, 200);
+  assert.match(res.headers.get('content-disposition'), /taskvane-sheet-template\.xlsx/);
+  const xlsx = Buffer.from(await res.arrayBuffer());
+  assert.strictEqual(xlsx.readUInt32LE(0), 0x04034b50, 'xlsx is a zip');
+  assert.strictEqual(xlsx.readUInt32LE(xlsx.length - 22), 0x06054b50, 'zip has its end record');
+  res = await fetch(base + '/sheet-template?format=csv&tab=tasks');
+  assert.strictEqual(res.status, 200);
+  assert.ok((await res.text()).startsWith('Task ID,Title,Status,'));
+  r = await call('GET', '/sheet-template?format=csv&tab=nope');
+  assert.strictEqual(r.status, 400);
+  console.log('✔ sample sheet downloads without login (.xlsx with all tabs, or one tab as CSV)');
+
   await app.close();
   console.log('All app-level checks passed.');
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

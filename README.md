@@ -209,6 +209,12 @@ nothing else in your Drive. You can skip the rest of this step.
 
 **Option B: use your own sheet.**
 
+> **Shortcut: download the sample sheet.** Click **Download sample sheet** in the docs site (Set up your team, step 5),
+> or call `GET /sheet-template` (no login). You get `taskvane-sheet-template.xlsx` with the `Tasks`, `History` and `Import` tabs and every header already in row 1.
+> In Google Sheets: **File → Import → Upload**, pick the file, choose **Replace spreadsheet** (or upload it to Drive and
+> **Open with → Google Sheets**). Then go straight to point 4 below.
+> Only need one tab's headers? `GET /sheet-template?format=csv&tab=tasks` (or `history`, `import`).
+
 1. Create a new Google Sheet (one sheet per project), e.g. **Website Revamp – Tracker**.
 2. Add a tab named exactly **`Tasks`**. In **row 1**, put the column headers you want.
    Only **`Task ID`** is required. Taskvane fills these columns when they exist (any order, extra columns are fine):

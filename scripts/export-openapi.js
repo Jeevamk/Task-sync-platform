@@ -3,6 +3,8 @@
  * front-end project (task-sync-FE), so its API reference always matches the code.
  *   Run: npm run export:openapi                       -> ../task-sync-FE/src/data/openapi.json
  *        npm run export:openapi -- path/to/out.json   -> another file
+ * With the default output it also writes the sample sheet (the same file as GET /sheet-template) to
+ * ../task-sync-FE/public/downloads/, so the docs' "Download sample sheet" button works as a static file.
  * Nothing connects to the database or to Trello/Slack: the app is created but never started.
  */
 const fs = require('fs');
@@ -39,6 +41,19 @@ const { buildOpenApiDocument } = require(path.join(root, 'dist/openapi'));
   fs.writeFileSync(out, JSON.stringify(doc, null, 2) + '\n');
   const count = Object.values(doc.paths).reduce((n, ops) => n + Object.keys(ops).length, 0);
   console.log(`Wrote ${out}: ${count} operations`);
+
+  if (!process.argv[2]) {
+    const { templateXlsx, templateCsv } = require(path.join(root, 'dist/modules/google/sheet-template-file'));
+    const { SHEET_TABS } = require(path.join(root, 'dist/modules/google/sheet-template'));
+    const dir = path.join(root, '../task-sync-FE/public/downloads');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'taskvane-sheet-template.xlsx'), templateXlsx());
+    for (const { title } of SHEET_TABS) {
+      const tab = title.toLowerCase();
+      fs.writeFileSync(path.join(dir, `taskvane-${tab}-template.csv`), templateCsv(tab));
+    }
+    console.log(`Wrote the sample sheet to ${dir}`);
+  }
   await app.close();
 })().catch((err) => {
   console.error('Could not export the OpenAPI document:', err);

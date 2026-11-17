@@ -72,7 +72,7 @@ export class ConnectionsService {
     const steps = [
       connect('TRELLO', 'Connect Trello', 'trello'),
       connect('SLACK', 'Add Taskvane to Slack', 'slack'),
-      connect('GOOGLE', 'Connect Google', 'google', 'Only needed for sheet: "new". Skip it if you share your own sheet.'),
+      connect('GOOGLE', 'Connect Google', 'google', 'Only needed for sheet: "new". Skip it if you share your own sheet (sample with all headers: GET /sheet-template).'),
       projects
         ? { step: 'Create a project', done: true, projects }
         : {
