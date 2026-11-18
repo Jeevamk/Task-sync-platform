@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { OrgAccessGuard } from '../../common/auth/org-access.guard';
+import { ApiTokensController } from './api-tokens.controller';
+import { ApiTokensService } from './api-tokens.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
@@ -18,8 +20,9 @@ import { AuthService } from './auth.service';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard, OrgAccessGuard],
-  exports: [JwtAuthGuard, OrgAccessGuard],
+  controllers: [AuthController, ApiTokensController],
+  // ApiTokensService is exported because JwtAuthGuard (used by every module's controllers) needs it.
+  providers: [AuthService, ApiTokensService, JwtAuthGuard, OrgAccessGuard],
+  exports: [ApiTokensService, JwtAuthGuard, OrgAccessGuard],
 })
 export class AuthModule {}

@@ -1,9 +1,15 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import type { Request } from 'express';
+import type { ApiTokenScope } from '../../database/types';
 
 export interface AuthUser {
   id: string;
   email: string;
+  /** How the request logged in: the login token (JWT) from /auth/google, or a personal access token (tv_pat_…). */
+  via: 'login' | 'token';
+  /** Only for personal access tokens: which token, and what it may do. */
+  tokenId?: string;
+  scope?: ApiTokenScope;
 }
 
 export type AuthedRequest = Request & { user?: AuthUser; orgRole?: 'OWNER' | 'COORDINATOR' };

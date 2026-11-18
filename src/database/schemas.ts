@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Schema, SchemaOptions } from 'mongoose';
 import { plainDocuments } from './plain-documents';
-import { EVENT_SOURCES, ORG_ROLES, OUTBOX_STATUSES, PROVIDERS, ROLES, TASK_EVENT_TYPES, TASK_STATUSES } from './types';
+import { API_TOKEN_SCOPES, EVENT_SOURCES, ORG_ROLES, OUTBOX_STATUSES, PROVIDERS, ROLES, TASK_EVENT_TYPES, TASK_STATUSES } from './types';
 
 /**
  * MongoDB collections. Unique indexes do real work here:
@@ -209,6 +209,25 @@ export const SyncErrorSchema = new Schema<any>(
 );
 SyncErrorSchema.index({ resolved: 1, createdAt: 1 });
 
+export const ApiTokenSchema = new Schema<any>(
+  {
+    _id: uuid,
+    userId: { type: String, required: true },
+    name: { type: String, required: true },
+    tokenHash: { type: String, required: true },
+    prefix: { type: String, required: true },
+    scope: { type: String, enum: API_TOKEN_SCOPES, default: 'read' },
+    lastUsedAt: optionalDate,
+    expiresAt: optionalDate,
+    revokedAt: optionalDate,
+    createdAt: now,
+  },
+  options('api_tokens'),
+);
+// Every request with a token looks it up by its hash.
+ApiTokenSchema.index({ tokenHash: 1 }, { unique: true });
+ApiTokenSchema.index({ userId: 1, createdAt: -1 });
+
 // Reads return plain objects with `id` (see plain-documents.ts).
 for (const schema of [
   OrganizationSchema,
@@ -223,6 +242,7 @@ for (const schema of [
   ProcessedEventSchema,
   OutboxEventSchema,
   SyncErrorSchema,
+  ApiTokenSchema,
 ]) {
   schema.plugin(plainDocuments);
 }

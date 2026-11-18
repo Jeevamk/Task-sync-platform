@@ -40,6 +40,10 @@ export type EventSource = (typeof EVENT_SOURCES)[number];
 export const OUTBOX_STATUSES = ['PENDING', 'SENT', 'FAILED'] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 
+/** What a personal access token may do: `read` = GET requests only; `read+write` = everything its user may do. */
+export const API_TOKEN_SCOPES = ['read', 'read+write'] as const;
+export type ApiTokenScope = (typeof API_TOKEN_SCOPES)[number];
+
 /** A customer (team or company). Everything below belongs to one organization. */
 export interface Organization {
   id: string;
@@ -192,5 +196,24 @@ export interface SyncError {
   error: string;
   payload: Record<string, unknown> | null;
   resolved: boolean;
+  createdAt: Date;
+}
+
+/**
+ * A personal access token (for MCP clients and scripts). Only the SHA-256 hash of the token is stored;
+ * the token itself is shown once, when it is created.
+ */
+export interface ApiToken {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  /** The first characters of the token (e.g. "tv_pat_AbCd"), so people can tell their tokens apart. */
+  prefix: string;
+  scope: ApiTokenScope;
+  lastUsedAt: Date | null;
+  /** null = never expires. */
+  expiresAt: Date | null;
+  revokedAt: Date | null;
   createdAt: Date;
 }

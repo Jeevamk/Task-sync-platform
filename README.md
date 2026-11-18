@@ -597,6 +597,7 @@ The full, always up-to-date reference with request and response examples is at *
 | Area | Endpoints |
 | --- | --- |
 | Login | `POST /auth/dev-login`, `POST /auth/google`, `GET /auth/me` |
+| Access tokens (for MCP clients and scripts) | `POST /auth/tokens` (`name`; `scope` `read` or `read+write`, default `read`; `expiresInDays` 1–365, default 90, `null` = never), `GET /auth/tokens`, `DELETE /auth/tokens/{tokenId}`. Send the token as `Authorization: Bearer tv_pat_…`; it is shown only once. A `read` token may only make GET requests. Managing tokens needs your login token. |
 | Organizations | `POST /orgs`, `GET /orgs`, `GET /orgs/{orgId}` |
 | Setup checklist | `GET /orgs/{orgId}/setup`: every step, done or not, what to call next, and free signup links |
 | Connections | `GET /orgs/{orgId}/connections`, `POST …/connections/trello/start`, `POST …/connections/slack/start`, `POST …/connections/google/start`, `DELETE …/connections/{provider}` (`trello`, `slack` or `google`) |

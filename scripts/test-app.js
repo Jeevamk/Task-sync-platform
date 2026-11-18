@@ -83,6 +83,7 @@ const db = {
   organizations: fakeModel(), users: fakeModel(), memberships: fakeModel(), connections: fakeModel(),
   oauthStates: fakeModel(), projects: fakeModel(), teamMembers: fakeModel(), tasks: fakeModel(),
   taskEvents: fakeModel(), processedEvents: fakeModel(), outboxEvents: fakeModel(), syncErrors: fakeModel(),
+  apiTokens: fakeModel(),
   transaction: async (work) => work(undefined),
   ping: async () => {},
   outboxCounts: async () => ({}),
@@ -135,6 +136,58 @@ const db = {
   r = await call('GET', `/orgs/${orgId}/trello/boards`, { token });
   assert.strictEqual(r.status, 400); assert.match(r.json.message, /Connect Trello first/);
   console.log('✔ other organizations are refused (403); using Trello before connecting gives a clear message');
+
+  // Personal access tokens (for MCP clients)
+  r = await call('POST', '/auth/tokens', { token, body: { name: 'Claude Desktop' } });
+  assert.strictEqual(r.status, 201);
+  const pat = r.json.token;
+  assert.ok(pat.startsWith('tv_pat_') && pat.length > 40);
+  assert.strictEqual(r.json.scope, 'read'); assert.strictEqual(r.json.status, 'active');
+  const days = (new Date(r.json.expiresAt) - Date.now()) / 86400000;
+  assert.ok(days > 89.9 && days <= 90, 'expires in 90 days by default');
+  assert.ok(!JSON.stringify(db.apiTokens.rows).includes(pat), 'only the hash is stored, never the token');
+  const patId = r.json.id;
+  r = await call('GET', '/auth/me', { token: pat });
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.email, 'jeeva@example.com');
+  assert.ok(db.apiTokens.rows[0].lastUsedAt instanceof Date, 'lastUsedAt is saved');
+  r = await call('GET', `/orgs/${orgId}`, { token: pat });
+  assert.strictEqual(r.status, 200);
+  r = await call('GET', `/orgs/33333333-3333-4333-8333-333333333333`, { token: pat });
+  assert.strictEqual(r.status, 403, 'a token only reaches the organizations of its own user');
+  r = await call('POST', '/orgs', { token: pat, body: { name: 'Sneaky Org' } });
+  assert.strictEqual(r.status, 403); assert.match(r.json.message, /read-only/);
+  r = await call('POST', '/auth/tokens', { token: pat, body: { name: 'escalate', scope: 'read+write' } });
+  assert.strictEqual(r.status, 403, 'a token cannot create tokens');
+  r = await call('GET', '/auth/tokens', { token: pat });
+  assert.strictEqual(r.status, 403, 'a token cannot list tokens');
+  console.log('✔ access token: created once (only its hash stored), logs in, read-only, no access to other orgs or to token management');
+
+  r = await call('POST', '/auth/tokens', { token, body: { name: 'Script', scope: 'read+write', expiresInDays: null } });
+  assert.strictEqual(r.status, 201); assert.strictEqual(r.json.expiresAt, null);
+  const rw = r.json.token;
+  r = await call('POST', '/orgs', { token: rw, body: { name: 'Second Team' } });
+  assert.strictEqual(r.status, 201, 'a read+write token can make changes');
+  for (const body of [{ name: '' }, { name: 'x', scope: 'admin' }, { name: 'x', expiresInDays: 0 }, { name: 'x', expiresInDays: 400 }, { name: 'x', expiresInDays: 1.5 }]) {
+    r = await call('POST', '/auth/tokens', { token, body });
+    assert.strictEqual(r.status, 400, 'refused: ' + JSON.stringify(body));
+  }
+  r = await call('GET', '/auth/tokens', { token });
+  assert.strictEqual(r.json.length, 2);
+  assert.ok(r.json.every((t) => !('token' in t) && !('tokenHash' in t)), 'the list never shows tokens or hashes');
+  r = await call('DELETE', `/auth/tokens/${patId}`, { token });
+  assert.strictEqual(r.status, 200); assert.strictEqual(r.json.status, 'revoked');
+  r = await call('GET', '/auth/me', { token: pat });
+  assert.strictEqual(r.status, 401, 'a revoked token stops working at once');
+  r = await call('DELETE', `/auth/tokens/${patId}`, { token });
+  assert.strictEqual(r.status, 200, 'revoking twice is fine');
+  r = await call('DELETE', '/auth/tokens/44444444-4444-4444-8444-444444444444', { token });
+  assert.strictEqual(r.status, 404);
+  db.apiTokens.rows.find((t) => t.name === 'Script').expiresAt = new Date(Date.now() - 1000);
+  r = await call('GET', '/auth/me', { token: rw });
+  assert.strictEqual(r.status, 401, 'an expired token stops working');
+  r = await call('GET', '/auth/me', { token: 'tv_pat_made-up' });
+  assert.strictEqual(r.status, 401);
+  console.log('✔ access tokens: read+write and never-expiring work; bad input refused; list hides secrets; revoke and expiry stop them');
 
   r = await call('POST', '/webhooks/trello', { body: {} });
   assert.strictEqual(r.status, 401);

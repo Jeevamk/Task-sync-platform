@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import mongoose, { ClientSession, Connection, Model, Schema } from 'mongoose';
 import {
+  ApiTokenSchema,
   ConnectionSchema,
   MembershipSchema,
   OAuthStateSchema,
@@ -16,6 +17,7 @@ import {
   UserSchema,
 } from './schemas';
 import type {
+  ApiToken,
   Connection as ConnectionDoc,
   Membership,
   OAuthState,
@@ -60,6 +62,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   readonly processedEvents = this.model<ProcessedEvent>('ProcessedEvent', ProcessedEventSchema);
   readonly outboxEvents = this.model<OutboxEvent>('OutboxEvent', OutboxEventSchema);
   readonly syncErrors = this.model<SyncError>('SyncError', SyncErrorSchema);
+  readonly apiTokens = this.model<ApiToken>('ApiToken', ApiTokenSchema);
 
   constructor(private readonly config: ConfigService) {}
 
@@ -126,6 +129,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       this.processedEvents,
       this.outboxEvents,
       this.syncErrors,
+      this.apiTokens,
     ] as Model<unknown>[];
   }
 }
