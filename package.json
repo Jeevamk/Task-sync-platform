@@ -15,6 +15,7 @@
     "test": "npm run build && node scripts/test-signatures.js && node scripts/test-multitenant.js && node scripts/test-app.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@nestjs/common": "11.2.8",
     "@nestjs/config": "4.0.4",
     "@nestjs/core": "11.2.8",
@@ -28,7 +29,8 @@
     "joi": "^18.3.2",
     "mongoose": "8.24.10",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.0",

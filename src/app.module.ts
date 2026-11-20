@@ -22,6 +22,7 @@ import { HealthModule } from './modules/health/health.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { InternalModule } from './modules/internal/internal.module';
 import { SheetsModule } from './modules/sheets/sheets.module';
+import { McpModule } from './modules/mcp/mcp.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { SheetsModule } from './modules/sheets/sheets.module';
     WebhooksModule,
     SheetsModule,
     InternalModule,
+    McpModule    
   ],
   providers: [
     // Checks every request body against its DTO (registered here so it also applies in tests and on Vercel).
