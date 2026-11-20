@@ -11,7 +11,7 @@ Nothing customer-specific lives in code or `.env` any more.
 | `config/project.json` + `setup:project` script | `POST /orgs/:orgId/projects` checks the board, the sheet sharing and the Slack channel, registers the webhook and imports the cards |
 | Team list in a JSON file | `POST /orgs/:orgId/team` — Slack ID found by email, Trello ID by username |
 | n8n WF1 wrote the sheet and posted to Slack (your credentials only) | The **backend** delivers to each organization's own sheet and Slack. Each finished step is remembered, so a retry never writes twice. n8n is **optional** (forward events to your own automations) |
-| No login | Google sign-in (`/auth/google`) or local **dev login**; every `/orgs/:orgId/...` route checks membership |
+| No login | **Sign in with Google** on the site (`task-sync-FE`, page `/login/`, which calls `/auth/google`), or local **dev login**; every `/orgs/:orgId/...` route checks membership. Scripts and MCP clients use **access tokens** (`/auth/tokens`) |
 | — | Interactive API docs at **`/docs`** |
 
 New tables: `organizations`, `users`, `memberships`, `connections` (encrypted tokens), `oauth_states`.
@@ -40,6 +40,8 @@ New tables: `organizations`, `users`, `memberships`, `connections` (encrypted to
    | `TOKEN_ENCRYPTION_KEY` | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
    | `JWT_SECRET` | Generate the same way |
    | `ALLOW_DEV_LOGIN=true` | Local only |
+   | `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console → **Credentials** → your OAuth client (Web application). The site's Sign in button uses the **same** ID (Part B) |
+   | `WEB_APP_URL` | The site's address (`task-sync-FE`), e.g. `http://localhost:3001` locally. The API only accepts browser requests from it (CORS), so sign-in fails without it |
    | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Slack app → **Basic Information → App Credentials** |
    | `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY` | From the service account JSON (`client_email`, `private_key`). Put the key in **double quotes**, keep the `\n` |
 
@@ -83,13 +85,27 @@ Replace `<PUBLIC_BASE_URL>` with your ngrok address now (later your Vercel addre
    `<PUBLIC_BASE_URL>/connect/google/callback`.
 4. Put the client's secret in `.env` as `GOOGLE_OAUTH_CLIENT_SECRET` (the client ID is `GOOGLE_OAUTH_CLIENT_ID`).
 
+**Sign in with Google** (the site's `/login/` page). Same OAuth client, in Google Cloud Console:
+
+1. **Credentials → your OAuth client → Authorized JavaScript origins**: add every address the site runs on, without a
+   path or `/` at the end: `http://localhost:3001` and `http://localhost` (local), and the live site, e.g.
+   `https://taskvane.vercel.app`. No redirect URI is needed for this.
+2. **OAuth consent screen**: `openid`, `email` and `profile` are enough. While the app is in *Testing*, only the listed
+   test users can sign in; **Publish** it to let anyone sign in.
+3. On the **site** (`task-sync-FE`), set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to the client ID (only the ID, never the secret).
+4. On the **API**, set `WEB_APP_URL` to the site's address.
+
+Users then only click **Sign in with Google**: they never see the client ID, the secret or Vercel.
+
 ---
 
 ## Part C — Try it as a customer (with Swagger, no web app yet)
 
 Open `<PUBLIC_BASE_URL>/docs` (or `http://localhost:3000/docs`).
 
-1. **Log in** — `POST /auth/dev-login` → *Try it out* → `{ "email": "you@gmail.com", "name": "Your Name" }` → copy `token`.
+1. **Sign in** — open the site's `/login/` page (`http://localhost:3001/login/` locally) → **Sign in with Google** →
+   copy the token. Or, locally with `ALLOW_DEV_LOGIN=true`: `POST /auth/dev-login` → *Try it out* →
+   `{ "email": "you@gmail.com", "name": "Your Name" }` → copy `token`.
    Click **Authorize** (top right) → paste the token → Authorize.
 2. **Create your organization** — `POST /orgs` → `{ "name": "Acme Dev Team" }` → copy `id` (this is `orgId`).
 3. **Connect Trello** — `POST /orgs/{orgId}/connections/trello/start` → open the `authorizeUrl` in the browser → **Allow**
@@ -146,6 +162,11 @@ Delivery no longer needs n8n. To also send every event to your own n8n workflow,
 | `Trello webhook not registered yet` (warning) | The API wasn't reachable at `PUBLIC_BASE_URL`. Start ngrok, then `POST /orgs/{orgId}/projects/{id}/webhook` |
 | `This connect link expired` | Links last 10 minutes and work once — start again |
 | You changed `TOKEN_ENCRYPTION_KEY` | Stored tokens can't be read: every organization must connect Trello and Slack again |
+| Sign in page: *Could not reach the Taskvane API* | Set `WEB_APP_URL` on the API to the site's exact address, then restart/redeploy the API |
+| Google: *origin_mismatch* | Add the site's address to **Authorized JavaScript origins** (Part B) |
+| `Google sign-in could not be verified` | The site's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` differs from the API's `GOOGLE_OAUTH_CLIENT_ID` |
+| Vercel: `500 FUNCTION_INVOCATION_FAILED` | Open the project's **Logs** tab (not Build Logs) and the failed request. `Startup failed: …` names a missing setting or the database. *No exports found in module src/main.js* means `main.ts` lost its `export default handler` |
+| Vercel: `503 The API could not start` | Startup failed (see **Logs** for `Startup failed: …`). Usually a missing environment variable, or Atlas Network Access not allowing `0.0.0.0/0` |
 
 ## Deploying (Vercel)
 
@@ -154,3 +175,14 @@ Set **all** `.env` values in Vercel → Project → Settings → Environment Var
 `MONGODB_URI` (`mongodb+srv://…`). In Atlas → **Network Access**, allow `0.0.0.0/0` (Vercel has no fixed IP addresses).
 Then add the Vercel address to Trello **Allowed origins** and the Slack **Redirect URL** (Part B).
 There is no migrate step: the API creates its indexes when it starts.
+
+For **Sign in with Google**, also set `WEB_APP_URL` to the live site's address and add that address to the OAuth
+client's **Authorized JavaScript origins** (Part B). On the site's own Vercel project, set `NEXT_PUBLIC_API_URL` (this
+API's address) and `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.
+
+After changing environment variables, **redeploy** (Deployments → ⋯ → Redeploy): a deployment keeps the values it was
+built with. Then open `https://<your-app>.vercel.app/health`: `"status": "ok"` and `"database": { "status": "up" }`.
+
+How it runs on Vercel: `src/main.ts` exports a request handler (`export default handler`), which Vercel calls for every
+request. The app starts on the first request of each function instance and is reused while the instance stays warm.
+Locally (no `VERCEL` variable) the same file listens on `PORT` as usual. No Dockerfile is needed.

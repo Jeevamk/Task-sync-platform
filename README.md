@@ -17,7 +17,7 @@ Work happens in Trello as usual. Every change is recorded and shown automaticall
 1. [How it works](#1-how-it-works)
 2. [Before you start](#2-before-you-start)
 3. [Set up your team (one time)](#3-set-up-your-team-one-time)
-   - [Step 1: Log in](#step-1-log-in)
+   - [Step 1: Sign in](#step-1-sign-in)
    - [Step 2: Create your organization](#step-2-create-your-organization)
    - [Step 3: Connect Trello](#step-3-connect-trello)
    - [Step 4: Add Taskvane to Slack](#step-4-add-taskvane-to-slack)
@@ -71,7 +71,8 @@ You need:
 
 | What | Notes |
 | --- | --- |
-| The Taskvane address | e.g. `https://your-app.vercel.app` (or an ngrok address while testing). Below it is written `<API>`. |
+| The Taskvane site | Where you sign in, e.g. `https://taskvane.vercel.app`. Below it is written `<SITE>`. |
+| The Taskvane API address | e.g. `https://your-app.vercel.app` (or an ngrok address while testing). Below it is written `<API>`. |
 | A Trello account | It must be able to see (and change) the board you want to sync. |
 | Slack admin rights, or permission to install apps | Only for Step 4. |
 | A Google account | To own the sheet and share it with Taskvane. |
@@ -85,7 +86,7 @@ The full path, in order. Steps 1 and 2 happen in Taskvane itself; the connect st
 
 | Step | What to do | Free signup (if you have no account) |
 | --- | --- | --- |
-| [Step 1: Log in](#step-1-log-in) | `POST /auth/dev-login` (testing) or Google sign-in. Copy the `token`, click **Authorize**. | — |
+| [Step 1: Sign in](#step-1-sign-in) | Open `<SITE>/login/`, click **Sign in with Google**. Copy the `token`, click **Authorize**. | https://accounts.google.com/signup |
 | [Step 2: Create your organization](#step-2-create-your-organization) | `POST /orgs`. Copy the `id`: it is your `orgId`. | — |
 | [Step 3: Connect Trello](#step-3-connect-trello) | `POST …/connections/trello/start`, open `authorizeUrl`, **Allow**. | https://trello.com/signup |
 | [Step 4: Add Taskvane to Slack](#step-4-add-taskvane-to-slack) | `POST …/connections/slack/start`, open `authorizeUrl`, **Allow**. | https://slack.com/get-started#/createnew (you become the admin, so you can install apps) |
@@ -102,7 +103,7 @@ what is done and what to call next. With all three connected, one call sets up e
 { "name": "Website Revamp", "trelloBoard": "new", "sheet": "new", "slackChannelId": "new" }
 ```
 
-There is no web app yet, so all steps below use the **interactive API page** at **`<API>/docs`**:
+Apart from signing in, there is no web app yet, so the steps after Step 1 use the **interactive API page** at **`<API>/docs`**:
 
 1. Open `<API>/docs`.
 2. Click an endpoint (for example `POST /orgs`), then **Try it out**.
@@ -116,14 +117,17 @@ There is no web app yet, so all steps below use the **interactive API page** at 
 
 ## 3. Set up your team (one time)
 
-### Step 1: Log in
+### Step 1: Sign in
 
-| Where | Endpoint |
-| --- | --- |
-| Testing / local | `POST /auth/dev-login` (only when the server has `ALLOW_DEV_LOGIN=true` and is not in production) |
-| Production | `POST /auth/google` with a Google sign-in ID token (used by the web app) |
+1. Open **`<SITE>/login/`** (the **Sign in** link at the top of the site).
+2. Click **Sign in with Google**, pick your account and click **Continue**. No Google account? Create one free at
+   https://accounts.google.com/signup.
+3. The page shows your name, your organizations and your **token**, with a **Copy** button.
 
-Dev login body:
+You never need a password, a client ID or a secret: the site does the Google part and calls `POST /auth/google` for you.
+
+**Testing a local API?** `POST /auth/dev-login` also works, but only when the server has `ALLOW_DEV_LOGIN=true` and is
+not in production (so never on the live API). Body:
 
 ```json
 { "email": "you@company.com", "name": "Your Name" }
@@ -135,10 +139,15 @@ Response:
 { "token": "eyJhbGciOi…", "user": { "id": "…", "email": "you@company.com", "name": "Your Name" } }
 ```
 
-Copy the **`token`**. On the `/docs` page, click **Authorize** (top right), paste the token and click **Authorize**.
-Every request you make on the page now sends it. The token is valid for **7 days**; log in again if you get `401 Unauthorized`.
+Copy the **`token`**. On the `<API>/docs` page, click **Authorize** (top right), paste the token and click **Authorize**.
+Every request you make on the page now sends it. The token is valid for **7 days**; sign in again if you get `401 Unauthorized`.
 
 `GET /auth/me` shows who you are and which organizations you belong to.
+
+> **Scripts and MCP clients** (Claude Desktop, Claude Code): create a longer-lived **access token** instead with
+> `POST /auth/tokens` (`{ "name": "Claude Desktop" }`). It starts with `tv_pat_`, is shown **once**, lasts 90 days by
+> default and is **read-only** unless you ask for `"scope": "read+write"`. Send it the same way
+> (`Authorization: Bearer tv_pat_…`). List them with `GET /auth/tokens`, revoke one with `DELETE /auth/tokens/{tokenId}`.
 
 ### Step 2: Create your organization
 
@@ -559,7 +568,14 @@ People are `@mentioned` when their team email matches their Slack account.
 
 | What you see | Why, and the fix |
 | --- | --- |
-| `401 Unauthorized` on `/orgs/...` | Not logged in or the token expired. Log in again (Step 1) and click **Authorize**. |
+| `401 Unauthorized` on `/orgs/...` | Not signed in, or the token expired (7 days). Sign in again (Step 1) and click **Authorize**. |
+| Sign in page: *Google sign-in is not set up on this site yet* | The site was built without `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. Whoever runs Taskvane sets it and redeploys the site. |
+| Sign in page: *Could not reach the Taskvane API at …* | The API is offline, or its `WEB_APP_URL` is not exactly the site's address (no `/` at the end). |
+| Google: *Error 400: origin_mismatch* / *The given origin is not allowed* | Add the site's address to the OAuth client's **Authorized JavaScript origins** ([README-MULTITENANT.md](README-MULTITENANT.md), Part B). |
+| `Google sign-in could not be verified` | The site's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and the API's `GOOGLE_OAUTH_CLIENT_ID` differ. Testing by hand: the ID token expired (about 1 hour) or came from another client. |
+| `Dev login is disabled` | Expected on the live API. Use the Sign in page. |
+| `This access token is read-only` | The `tv_pat_` token has scope `read` (GET only). Create one with `"scope": "read+write"`. |
+| `This access token is invalid, expired or revoked` | Create a new one with `POST /auth/tokens`. |
 | `403` on an organization | You are not a member of that organization. Check the `orgId` with `GET /orgs`. |
 | `Connect Trello first` / `Add Taskvane to Slack first` | Do Step 3 / Step 4 for **this** organization. No account yet? See [No accounts yet? Start here](#no-accounts-yet-start-here). |
 | `This connect link expired` | Connect links last 10 minutes and work once. Start the step again. |
@@ -596,7 +612,7 @@ The full, always up-to-date reference with request and response examples is at *
 
 | Area | Endpoints |
 | --- | --- |
-| Login | `POST /auth/dev-login`, `POST /auth/google`, `GET /auth/me` |
+| Login | `POST /auth/google` (called by the site's Sign in page), `POST /auth/dev-login` (testing only), `GET /auth/me` |
 | Access tokens (for MCP clients and scripts) | `POST /auth/tokens` (`name`; `scope` `read` or `read+write`, default `read`; `expiresInDays` 1–365, default 90, `null` = never), `GET /auth/tokens`, `DELETE /auth/tokens/{tokenId}`. Send the token as `Authorization: Bearer tv_pat_…`; it is shown only once. A `read` token may only make GET requests. Managing tokens needs your login token. |
 | Organizations | `POST /orgs`, `GET /orgs`, `GET /orgs/{orgId}` |
 | Setup checklist | `GET /orgs/{orgId}/setup`: every step, done or not, what to call next, and free signup links |
