@@ -51,7 +51,7 @@ import { McpModule } from './modules/mcp/mcp.module';
     WebhooksModule,
     SheetsModule,
     InternalModule,
-    McpModule    
+    McpModule,
   ],
   providers: [
     // Checks every request body against its DTO (registered here so it also applies in tests and on Vercel).
