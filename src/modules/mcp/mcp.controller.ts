@@ -13,7 +13,7 @@ export class McpController {
   constructor(private readonly mcp: McpService) {}
 
   @Post()
-  @ReadTokenAllowed() // each tool checks the token's scope itself
+  @ReadTokenAllowed() // read tokens get in; every write tool must call McpAccessService.requireWrite
   @ApiOperation({ summary: 'MCP endpoint (Streamable HTTP, stateless) for Claude and other MCP clients' })
   handle(@CurrentUser() user: AuthUser, @Req() req: Request, @Res() res: Response): Promise<void> {
     return this.mcp.handleRequest(user, req, res);

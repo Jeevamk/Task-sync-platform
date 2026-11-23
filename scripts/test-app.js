@@ -189,6 +189,81 @@ const db = {
   assert.strictEqual(r.status, 401);
   console.log('✔ access tokens: read+write and never-expiring work; bad input refused; list hides secrets; revoke and expiry stop them');
 
+  // MCP endpoint (Streamable HTTP, stateless)
+  const mcpRead = (await call('POST', '/auth/tokens', { token, body: { name: 'MCP read' } })).json.token;
+  const mcpRw = (await call('POST', '/auth/tokens', { token, body: { name: 'MCP rw', scope: 'read+write' } })).json.token;
+  let rpcId = 0;
+  const mcp = (tok, method, params, accept = 'application/json, text/event-stream') =>
+    call('POST', '/mcp', { token: tok, headers: { Accept: accept }, body: { jsonrpc: '2.0', id: ++rpcId, method, ...(params ? { params } : {}) } });
+  const tool = async (tok, name, args = {}) => {
+    const res = await mcp(tok, 'tools/call', { name, arguments: args });
+    assert.strictEqual(res.status, 200);
+    const out = res.json.result;
+    return { isError: !!out.isError, text: out.content[0].text };
+  };
+
+  r = await mcp(undefined, 'tools/list');
+  assert.strictEqual(r.status, 401, 'MCP needs a token');
+  r = await call('GET', '/mcp', { token: mcpRead });
+  assert.strictEqual(r.status, 405);
+  r = await call('DELETE', '/mcp', { token });
+  assert.strictEqual(r.status, 405);
+  r = await call('DELETE', '/mcp', { token: mcpRead });
+  assert.strictEqual(r.status, 403, 'read tokens may only POST to /mcp');
+  r = await mcp(mcpRead, 'tools/list', undefined, 'application/json');
+  assert.strictEqual(r.status, 406, 'clients must accept both JSON and event-stream');
+  r = await mcp(mcpRead, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.json.result.serverInfo, { name: 'taskvane', version: '0.3.0' });
+  assert.ok(r.json.result.capabilities.tools);
+  r = await mcp(mcpRead, 'tools/list');
+  const toolNames = r.json.result.tools.map((t) => t.name).sort();
+  assert.deepStrictEqual(toolNames, ['get_organization', 'list_organizations']);
+  console.log('✔ MCP: needs a token; GET/DELETE refused (405); wrong Accept refused (406); initialize + tools/list work with a read token');
+
+  let t1 = await tool(mcpRead, 'list_organizations');
+  assert.ok(!t1.isError);
+  const mcpOrgs = JSON.parse(t1.text);
+  assert.ok(mcpOrgs.some((o) => o.id === orgId && o.name === 'Acme Dev Team'), 'lists the user\'s organization');
+  t1 = await tool(mcpRead, 'get_organization', { orgId });
+  assert.ok(!t1.isError);
+  const overview = JSON.parse(t1.text);
+  assert.strictEqual(overview.googleSheets.shareWith, 'tasksync@proj.iam.gserviceaccount.com');
+  assert.strictEqual(overview.connections.trello.connected, false);
+  t1 = await tool(mcpRead, 'get_organization', { orgId: '33333333-3333-4333-8333-333333333333' });
+  assert.ok(t1.isError); assert.match(t1.text, /not a member/);
+  t1 = await tool(mcpRead, 'get_organization', { orgId: 'not-a-uuid' });
+  assert.ok(t1.isError); assert.match(t1.text, /Invalid UUID/);
+  t1 = await tool(mcpRead, 'no_such_tool');
+  assert.ok(t1.isError);
+  r = await mcp(token, 'tools/list');
+  assert.strictEqual(r.status, 200, 'the login token works on MCP too');
+  t1 = await tool(mcpRw, 'list_organizations');
+  assert.ok(!t1.isError, 'a read+write token can use read tools');
+  console.log('✔ MCP tools: list_organizations + get_organization return the user\'s data; other orgs, bad ids and unknown tools give tool errors');
+
+  const { McpAccessService } = require(root + 'dist/modules/mcp/mcp-access.service');
+  const access = app.get(McpAccessService);
+  const me = (await call('GET', '/auth/me', { token })).json;
+  const asRead = { id: me.id, email: me.email, via: 'token', scope: 'read' };
+  const asRw = { ...asRead, scope: 'read+write' };
+  const asLogin = { id: me.id, email: me.email, via: 'login' };
+  assert.throws(() => access.requireWrite(asRead), /read-only/);
+  access.requireWrite(asRw);
+  access.requireWrite(asLogin);
+  await assert.rejects(access.requireWriteRole(asRead, orgId, ['OWNER']), /read-only/);
+  assert.strictEqual(await access.requireWriteRole(asRw, orgId, ['OWNER']), 'OWNER');
+  await assert.rejects(access.requireRole(asLogin, orgId, ['COORDINATOR']), /Only COORDINATOR/);
+  await assert.rejects(access.requireRole(asLogin, '33333333-3333-4333-8333-333333333333', ['OWNER']), /not a member/);
+  console.log('✔ MCP access: read tokens refused by requireWrite; read+write and login pass; roles enforced');
+
+  for (const tk of db.apiTokens.rows.filter((x) => x.name.startsWith('MCP '))) {
+    await call('DELETE', `/auth/tokens/${tk._id}`, { token });
+  }
+  r = await mcp(mcpRead, 'tools/list');
+  assert.strictEqual(r.status, 401, 'a revoked token is refused by MCP');
+  console.log('✔ MCP: revoked tokens are refused');
+
   r = await call('POST', '/webhooks/trello', { body: {} });
   assert.strictEqual(r.status, 401);
   r = await call('GET', '/connect/trello/callback?state=abc');

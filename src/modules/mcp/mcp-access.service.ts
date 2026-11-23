@@ -24,4 +24,32 @@ export class McpAccessService {
     }
     return membership.role;
   }
+
+  /**
+   * Every tool that changes data must call this first. POST /mcp lets `read` tokens in (see
+   * @ReadTokenAllowed on McpController), so this is the only thing keeping them read-only.
+   * The login token (JWT) and `read+write` tokens pass.
+   */
+  requireWrite(user: AuthUser): void {
+    if (user.via === 'token' && user.scope !== 'read+write') {
+      this.logger.warn(`Read-only token ${shortId(user.tokenId)} refused for a write tool over MCP`);
+      throw new Error('This access token is read-only. Use a token with scope "read+write" to make changes.');
+    }
+  }
+
+  /** The user must be a member of the organization with one of `roles` (e.g. only an OWNER may remove members). */
+  async requireRole(user: AuthUser, orgId: string, roles: readonly OrgRole[]): Promise<OrgRole> {
+    const role = await this.requireMember(user, orgId);
+    if (!roles.includes(role)) {
+      this.logger.warn(`${maskEmail(user.email)} (${role}) refused in org ${shortId(orgId)} over MCP: needs ${roles.join(' or ')}`);
+      throw new Error(`Only ${roles.join(' or ')} members of this organization can do that. Your role is ${role}.`);
+    }
+    return role;
+  }
+
+  /** For write tools: the token may write, and the user has one of `roles` in the organization. */
+  async requireWriteRole(user: AuthUser, orgId: string, roles: readonly OrgRole[]): Promise<OrgRole> {
+    this.requireWrite(user);
+    return this.requireRole(user, orgId, roles);
+  }
 }
