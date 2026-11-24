@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { SwaggerModule } from '@nestjs/swagger';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { AppModule } from './app.module';
+import { configureCors } from './common/http/cors';
 import { createAppLogger } from './common/logging/logger';
 import { requestLogger } from './common/logging/request-logger';
 import { buildOpenApiDocument } from './openapi';
@@ -33,7 +34,7 @@ async function createApp(): Promise<INestApplication> {
 
   const config = app.get(ConfigService);
   const webApp = config.get<string>('WEB_APP_URL');
-  app.enableCors({ origin: webApp ? [webApp] : false });
+  configureCors(app, webApp); // /mcp open to any origin (Bearer auth only); the rest only to the web app
 
   // Interactive API docs at /docs (use "Authorize" with the token from /auth/google or /auth/dev-login)
   // The UI files come from a CDN: Vercel does not bundle node_modules/swagger-ui-dist, so serving them

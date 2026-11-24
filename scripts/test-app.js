@@ -92,6 +92,7 @@ const db = {
 (async () => {
   const mod = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(DatabaseService).useValue(db).compile();
   const app = mod.createNestApplication({ rawBody: true, logger: false });
+  require(root + 'dist/common/http/cors').configureCors(app, 'https://app.example.com');
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, new DocumentBuilder().addBearerAuth().build()));
   await app.listen(0);
   const base = await app.getUrl();
@@ -212,6 +213,12 @@ const db = {
   assert.strictEqual(r.status, 403, 'read tokens may only POST to /mcp');
   r = await mcp(mcpRead, 'tools/list', undefined, 'application/json');
   assert.strictEqual(r.status, 406, 'clients must accept both JSON and event-stream');
+  const preflight = (path) => fetch(base + path, { method: 'OPTIONS', headers: { Origin: 'http://localhost:6274', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' } });
+  let pf = await preflight('/mcp');
+  assert.strictEqual(pf.headers.get('access-control-allow-origin'), 'http://localhost:6274', 'browser MCP clients may call /mcp');
+  assert.strictEqual(pf.headers.get('access-control-allow-credentials'), null, 'no cookies on /mcp');
+  pf = await preflight('/orgs');
+  assert.strictEqual(pf.headers.get('access-control-allow-origin'), null, 'other routes stay closed to other origins');
   r = await mcp(mcpRead, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(r.json.result.serverInfo, { name: 'taskvane', version: '0.3.0' });
